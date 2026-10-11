@@ -77,6 +77,7 @@ func (b *Backend) Init(h platform.AppHandler, _ platform.AppOptions) error {
 	}
 	b.h = h
 	b.mainID = goroutineID()
+	installFiles()
 	nav := js.Global().Get("navigator")
 	platformName := nav.Get("platform")
 	b.mac = !platformName.IsUndefined() && len(platformName.String()) >= 3 && platformName.String()[:3] == "Mac"
