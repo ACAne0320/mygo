@@ -16,7 +16,19 @@ func main() {
 }
 ```
 
-Build it for `js/wasm`, with Go's loader of WebAssembly beside it:
+`mygo dev -web` develops it in the browser: it compiles the app to
+WebAssembly, serves it at `http://localhost:5174`, opens it, and rebuilds it
+as you edit, which reloads the page. `mygo build -platform web` builds it
+into `<out>/web`, a static site to serve from anywhere: `index.html`, Go's
+`wasm_exec.js` and the app's WebAssembly (see [the CLI](../cli.md#mygo-build)).
+
+```sh
+mygo dev -web
+mygo build -platform web
+```
+
+Without the CLI, build it for `js/wasm`, with Go's loader of WebAssembly
+beside it:
 
 ```sh
 GOOS=js GOARCH=wasm go build -o app.wasm .

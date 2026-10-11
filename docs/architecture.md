@@ -2442,6 +2442,15 @@ renderer's (`gputest.Compare`).
 
 ## CLI (`cmd/mygo`)
 
+- Browsers (`web.go`): `build -platform web` (or `js/wasm`) compiles the
+  app with `GOOS=js GOARCH=wasm` and the production flags into `<out>/web`,
+  with a page of its own (`webPage`: a spinner while the WebAssembly loads)
+  and the `wasm_exec.js` of the Go that compiled it, which must match.
+  `dev -web` serves the page, the loader and the last build that compiled
+  from memory (`webDev`), rebuilds on the watcher's changes as the desktop
+  loop does, and tells pages through server-sent events (`/__mygo/events`):
+  `reload` after a build, `build-error` with the compiler's output, which
+  the page shows over the app until a build compiles.
 - `init` renders `cmd/mygo/template`: a Go module and a TypeScript frontend
   built with Vite, side by side at the project root like the examples, draws
   a default icon at `resources/icon.png`, fetches modules, installs the
