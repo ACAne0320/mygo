@@ -6,6 +6,7 @@ import { codeToKeyedTokens } from "@shikijs/magic-move/core"
 import type { KeyedTokensInfo } from "@shikijs/magic-move/types"
 import GithubSlugger from "github-slugger"
 import type { Element, ElementContent, Root, RootContent } from "hast"
+import type { Root as MdRoot } from "mdast"
 import { toString } from "hast-util-to-string"
 import rehypeStringify from "rehype-stringify"
 import remarkGfm from "remark-gfm"
@@ -54,6 +55,7 @@ export async function renderMarkdown(source: string, file: string, links: LinkOp
     .use(remarkParse)
     .use(remarkGfm)
     .use(() => omitRepositoryOnly)
+    .use(() => previews)
     .use(remarkRehype)
     .use(() => (tree: Root) => transform(tree, out, shiki, file, links))
     .use(rehypeStringify)
@@ -113,6 +115,33 @@ function transform(tree: Root, out: RenderedMarkdown, shiki: Highlighter, file: 
   })
 
   cardLists(tree)
+}
+
+const preview = /^<!--\s*preview\s+([\w-]+)\s+(\d+)\s*-->$/
+
+/**
+ * A comment `<!-- preview button 140 -->`, which GitHub does not show,
+ * becomes a frame of the demo of that name (website/docs-demo), as high
+ * as it says.
+ */
+function previews(tree: MdRoot) {
+  visit(tree, "html", (node, index, parent) => {
+    const m = preview.exec(node.value.trim())
+    if (!m || !parent || index === undefined) return
+    const [, name, height] = m
+    const iframe: Element = {
+      type: "element",
+      tagName: "iframe",
+      properties: { src: `/docs-demo?demo=${name}`, title: `A preview of ${name}`, loading: "lazy", style: `height:${height}px` },
+      children: [],
+    }
+    // A node of its own type: remark-rehype makes it the element its data
+    // names, where it drops HTML.
+    parent.children[index] = {
+      type: "uiPreview",
+      data: { hName: "div", hProperties: { className: ["ui-preview"] }, hChildren: [iframe] },
+    } as unknown as (typeof parent.children)[number]
+  })
 }
 
 function headingDepth(node: Element) {

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>MyGo UI preview</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { margin: 0; height: 100%; background: transparent; }
+      body {
+        display: flex; align-items: center; justify-content: center;
+        font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #71717a;
+      }
+    </style>
+    <!-- The page of a demo of the docs (website/docs-demo): /docs-demo?demo=button. -->
+    <script src="/docs-demo/wasm_exec.js"></script>
+    <script>
+      const demo = new URLSearchParams(location.search).get("demo") || ""
+      const go = new Go()
+      go.argv = ["docs-demo", demo]
+      WebAssembly.instantiateStreaming(fetch("/docs-demo/__WASM__"), go.importObject)
+        .then((r) => go.run(r.instance))
+        .catch((e) => { document.body.textContent = "The preview did not load: " + e })
+    </script>
+  </head>
+  <body>Loading the preview…</body>
+</html>
