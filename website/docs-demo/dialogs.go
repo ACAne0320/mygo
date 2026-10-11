@@ -58,23 +58,43 @@ func init() {
 		}
 	})
 
-	menu, last := false, ""
+	// The popover starts open, so that the page shows its panel: the
+	// dimensions of a layer, which the layer beside follows.
+	open, width, height, radius := true, 160.0, 96.0, 12.0
 	demo("popover", func(c *ui.Context) {
-		dialogsTop(c, func() {
-			more := ui.Button(c, "More ▾")
-			if more.Clicked() {
-				menu = !menu
-			}
-			ui.Popover(c, more, &menu, func() {
-				for _, action := range []string{"Rename", "Duplicate", "Move to Trash"} {
-					if ui.Button(c.Key(action), action).AlignSelf(ui.Stretch).Clicked() {
-						menu, last = false, action
-					}
-				}
+		t := c.Theme()
+		ui.Row(c).Grow(1).AlignSelf(ui.Stretch).AlignItems(ui.Start).Gap(24).Children(func() {
+			dims := ui.Button(c, "").Children(func() {
+				ui.Icon(c, dialogsRuler)
+				ui.Text(c, "Dimensions").SingleLine()
 			})
-			if last != "" {
-				status(c, "Chose "+last)
+			if dims.Clicked() {
+				open = !open
 			}
+			ui.Popover(c, dims, &open, func() {
+				ui.Column(c).Width(240).Gap(12).Padding(4).Children(func() {
+					ui.Column(c).Gap(2).Children(func() {
+						ui.Text(c, "Dimensions").Bold()
+						ui.Text(c, "Set the size of the layer.").FontSize(12).TextColor(t.TextMuted)
+					})
+					ui.Grid(c).ColumnTracks(ui.FitContent(), ui.Fr(1), ui.FitContent()).GapX(10).GapY(10).Children(func() {
+						field := func(label string, value *float64, lo, hi float64) {
+							ui.Text(c, label).FontSize(12).TextColor(t.TextMuted).AlignSelf(ui.Center)
+							ui.Slider(c.Key(label), value, lo, hi).Step(2).Label(label).AlignSelf(ui.Center)
+							ui.Text(c, fmt.Sprintf("%.0f", *value)).FontSize(12).Width(24).AlignSelf(ui.Center)
+						}
+						field("Width", &width, 40, 260)
+						field("Height", &height, 30, 150)
+						field("Radius", &radius, 0, 48)
+					})
+				})
+			})
+			ui.Column(c).Grow(1).AlignSelf(ui.Stretch).Center().Children(func() {
+				ui.Column(c).Size(float32(width), float32(height)).Radius(float32(radius)).Center().
+					Background(t.Accent).TextColor(t.AccentText).Children(func() {
+					ui.Text(c, fmt.Sprintf("%.0f × %.0f", width, height)).FontSize(12)
+				})
+			})
 		})
 	})
 
@@ -137,6 +157,9 @@ func init() {
 
 // dialogsTop builds a demo at the top of the frame, rather than in its
 // middle, leaving the room below for what it opens: a popover, toasts.
+// dialogsRuler is a ruler's icon, for the dimensions of a layer.
+var dialogsRuler = icon(`<path d="M21.3 15.3 8.7 2.7a1 1 0 0 0-1.4 0L2.7 7.3a1 1 0 0 0 0 1.4l12.6 12.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4z"/><path d="m7.5 10.5 2-2M10.5 13.5l2-2M13.5 16.5l2-2"/>`)
+
 func dialogsTop(c *ui.Context, fn func()) {
 	ui.Column(c).Grow(1).AlignItems(ui.Center).Gap(12).Children(fn)
 }
