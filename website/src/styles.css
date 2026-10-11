@@ -283,15 +283,14 @@
    in a window of macOS: prefers-color-scheme in the frame follows its
    color-scheme. */
 .ui-preview {
-  @apply my-8 overflow-hidden rounded-[10px];
+  @apply my-6 overflow-hidden rounded-[10px];
   --preview-bar: #fafafa;
   --preview-bar-border: #ebebeb;
   --preview-title: #4d4d4d;
   background: #fff;
   box-shadow:
-    0 0 0 0.5px rgb(0 0 0 / 0.22),
-    0 10px 30px -6px rgb(0 0 0 / 0.22),
-    0 2px 6px rgb(0 0 0 / 0.08);
+    0 0 0 0.5px rgb(0 0 0 / 0.18),
+    0 4px 12px -4px rgb(0 0 0 / 0.1);
 
   .dark & {
     --preview-bar: #2a2a2b;
@@ -299,9 +298,9 @@
     --preview-title: #b9b9bb;
     background: #1e1e1e;
     box-shadow:
-      0 0 0 0.5px rgb(255 255 255 / 0.16),
-      0 0 0 1px rgb(0 0 0 / 0.5),
-      0 12px 32px -6px rgb(0 0 0 / 0.6);
+      0 0 0 0.5px rgb(255 255 255 / 0.14),
+      0 0 0 1px rgb(0 0 0 / 0.4),
+      0 4px 12px -4px rgb(0 0 0 / 0.35);
   }
 }
 
