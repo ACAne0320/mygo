@@ -204,16 +204,22 @@ func (p *Painter) element(e *node) {
 			}
 			var sp spanPaint
 			p.inline = e
-			p.textLayout(e.tl, ox, oy, ts.color, ts, e.paintSpans(&sp))
+			if spans := e.paintSpans(&sp); !e.contentSet || !p.contentText(e, ox, oy, ts, spans) {
+				p.textLayout(e.tl, ox, oy, ts.color, ts, spans)
+			}
 			p.inline = nil
 		case kindImage:
-			p.image(e)
+			if !e.contentSet || !p.contentImage(e) {
+				p.image(e)
+			}
 		case kindIcon:
 			c := e.resolvedText().color
 			if e.gray {
 				c = c.gray()
 			}
-			p.drawIcon(e.svg, e.contentBox(), c, e.rotate)
+			if !e.contentSet || !p.contentIcon(e, e.contentBox(), c) {
+				p.drawIcon(e.svg, e.contentBox(), c, e.rotate)
+			}
 		case kindInput:
 			e.paintInput(p)
 		}

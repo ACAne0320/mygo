@@ -2661,6 +2661,23 @@ func (_handle Element) Composing() bool {
 	return _node.Composing()
 }
 
+// ContentTransition animates the element's content as it changes, as t
+// says: the text of a Text, the icon of an Icon, the picture of an Image.
+// Changes animate from frame to frame while the element is painted, in
+// frames that only paint. While the desktop asks for less motion, content
+// fades without moving.
+//
+//	ui.Text(c, strconv.Itoa(app.count)).ContentTransition(ui.ContentTransition{Numeric: true, Down: app.decreased})
+func (_handle Element) ContentTransition(t ContentTransition) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.ContentTransition(t))
+}
+
 // ContextMenu gives the element a context menu, which build fills with
 // items. The system shows it where the element is clicked with the
 // secondary button, or Control-clicked on macOS, and, while the element or

@@ -245,6 +245,9 @@ type node struct {
 	originX, originY float32
 	originSet        bool
 	world            scene.Affine
+	// content is how its content changes (ContentTransition), when set.
+	content    ContentTransition
+	contentSet bool
 
 	// Painting.
 	bg           Color
