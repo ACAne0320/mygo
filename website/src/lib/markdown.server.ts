@@ -7,6 +7,7 @@ import type { KeyedTokensInfo } from "@shikijs/magic-move/types"
 import GithubSlugger from "github-slugger"
 import type { Element, ElementContent, Root, RootContent } from "hast"
 import type { Root as MdRoot } from "mdast"
+import { toString as mdToString } from "mdast-util-to-string"
 import { toString } from "hast-util-to-string"
 import rehypeStringify from "rehype-stringify"
 import remarkGfm from "remark-gfm"
@@ -122,24 +123,36 @@ const preview = /^<!--\s*preview\s+([\w-]+)\s+(\d+)\s*-->$/
 /**
  * A comment `<!-- preview button 140 -->`, which GitHub does not show,
  * becomes a frame of the demo of that name (website/docs-demo), as high
- * as it says.
+ * as it says, in a window of macOS titled as the page.
  */
 function previews(tree: MdRoot) {
+  const heading = tree.children.find((node) => node.type === "heading" && node.depth === 1)
+  const title = heading ? mdToString(heading) : ""
   visit(tree, "html", (node, index, parent) => {
     const m = preview.exec(node.value.trim())
     if (!m || !parent || index === undefined) return
     const [, name, height] = m
-    const iframe: Element = {
+    const el = (tagName: string, className: string, children: ElementContent[] = [], properties: Element["properties"] = {}): Element => ({
       type: "element",
-      tagName: "iframe",
-      properties: { src: `/docs-demo?demo=${name}`, title: `A preview of ${name}`, loading: "lazy", style: `height:${height}px` },
-      children: [],
-    }
+      tagName,
+      properties: { className: [className], ...properties },
+      children,
+    })
+    const titlebar = el("div", "ui-preview-titlebar", [
+      el("span", "ui-preview-lights", [el("i", "close"), el("i", "minimize"), el("i", "zoom")], { ariaHidden: "true" }),
+      el("span", "ui-preview-title", [{ type: "text", value: title || name }]),
+    ])
+    const iframe = el("iframe", "ui-preview-frame", [], {
+      src: `/docs-demo?demo=${name}`,
+      title: `A preview of ${title || name}`,
+      loading: "lazy",
+      style: `height:${height}px`,
+    })
     // A node of its own type: remark-rehype makes it the element its data
     // names, where it drops HTML.
     parent.children[index] = {
       type: "uiPreview",
-      data: { hName: "div", hProperties: { className: ["ui-preview"] }, hChildren: [iframe] },
+      data: { hName: "figure", hProperties: { className: ["ui-preview"] }, hChildren: [titlebar, iframe] },
     } as unknown as (typeof parent.children)[number]
   })
 }

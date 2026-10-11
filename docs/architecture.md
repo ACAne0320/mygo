@@ -564,7 +564,8 @@ gained one field, `SurfaceNative.Canvas`.
   loop until an item is chosen, a press lands elsewhere, Escape is pressed
   or the page loses focus; the choice goes to `MenuItemClicked`.
 - **Themes**: `IsDark` and `Preferences` read `matchMedia`, whose changes
-  call `ThemeChanged`. `ShowMessageBox` uses `alert` and `confirm`.
+  call `ThemeChanged`; the root's `data-mygo-theme` (watched by a
+  `MutationObserver`) chooses the appearance over the media's. `ShowMessageBox` uses `alert` and `confirm`.
 - **History** (`ui/router_js.go`): the first `ui.Router` a window (not a
   `Tester`) shows claims the tab's history, through hooks the router calls
   (`browserHistory`, nil elsewhere). Its location goes in the URL's

@@ -70,7 +70,10 @@ the title of the window opened last is the page's.
   a reload, opens the app there.
 - **Context menus** show as menus of HTML on the page.
 - **Dark mode**, reduced motion and more contrast follow the browser's
-  settings, and change with them.
+  settings, and change with them. A page can choose the appearance itself
+  with `data-mygo-theme="dark"` or `"light"` on its root element, as one
+  framing the app does to give it its own theme (a frame's
+  `prefers-color-scheme` follows the browser, not the page around it).
 - `Dialog.Message` asks with the browser's `alert` and `confirm`, and
   `Shell.OpenExternal` opens a tab.
 
