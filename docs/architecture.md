@@ -1574,8 +1574,9 @@ either.
   its velocity through changes and a delay holds them. Colors move as
   elements paint, after their `styleFn`. A `Match` moves an element
   appearing where another of the same identity showed the frame before
-  (`rt.matched`, in window coordinates) by a transform after `place`
-  (`animateMatches`), across parents and scroll offsets. An element appears with
+  (`rt.matched`, in window coordinates) after `place` (`animateMatches`),
+  laying it out anew at each box on the way, across parents and scroll
+  offsets. An element appears with
   its `Enter` only in a parent the frame before had. One no longer built,
   whose parent still is, goes with its `Exit` as an inert copy, laid out
   and painted under its siblings without taking room: frames that built

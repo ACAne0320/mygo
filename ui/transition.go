@@ -4,8 +4,6 @@ import (
 	"math"
 	"slices"
 	"time"
-
-	"github.com/egoist/mygo/internal/scene"
 )
 
 // ElementTransition animates an element (Element.Transition) from what the
@@ -499,9 +497,9 @@ func (rt *engine) animateMatches() {
 			}
 			if !moving {
 				r.matching = false
-			} else if box.W > 0 && box.H > 0 {
+			} else {
 				shown = Rect{v[0], v[1], max(v[2], 0), max(v[3], 0)}
-				e.transform = e.transform.Then(e.mapping(box, shown))
+				e.showAt(shown)
 				rt.animating = true
 			}
 		}
@@ -519,17 +517,17 @@ func (rt *engine) animateMatches() {
 	}
 }
 
-// mapping returns the transform that, around e's TransformOrigin, shows
-// its box from at to.
-func (e *node) mapping(from, to Rect) Transform {
-	ox, oy := float32(0.5), float32(0.5)
-	if e.originSet {
-		ox, oy = e.originX, e.originY
+// showAt shows e in the window's box r, its content laid out at r's size
+// as a Transition's Size lays it out on the way: once the frame's boxes are
+// in the window.
+func (e *node) showAt(r Rect) {
+	if r.W == e.w && r.H == e.h {
+		shift(e, r.X-e.x, r.Y-e.y)
+		return
 	}
-	x, y := e.x+ox*e.w, e.y+oy*e.h
-	sx, sy := to.W/from.W, to.H/from.H
-	m := scene.Translation(-x, -y).Mul(scene.Translation(to.X, to.Y)).Mul(scene.Scaling(sx, sy)).Mul(scene.Translation(-from.X, -from.Y)).Mul(scene.Translation(x, y))
-	return Transform{m}
+	layoutBox(e, r.W, r.H)
+	e.x, e.y = r.X, r.Y
+	place(e, 0, 0)
 }
 
 // byDepth returns the transitions asked for in the order of their

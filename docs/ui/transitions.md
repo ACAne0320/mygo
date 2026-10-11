@@ -146,10 +146,10 @@ if app.open == nil {
 ```
 
 Use a type of your own for the identity, so that it is no other's. The
-element appearing goes there with a transform, from the other's box to
-its own: its content lays out at its own size, scaled on the way, rounded
-corners included. Give one element a `Match` at a time; the one gone goes
-as its own `Exit` says, if it has one.
+element appearing goes from the other's box to its own, its content laid
+out at each size on the way, as `Size` lays it out, so nothing in it
+stretches, its rounded corners included. Give one element a `Match` at a
+time; the one gone goes as its own `Exit` says, if it has one.
 
 ## When nothing moves
 

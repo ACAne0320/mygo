@@ -150,6 +150,9 @@ func TestTransitionMatchesElements(t *testing.T) {
 	if b := keyed(tt, "hero").Bounds(); !nearRect(b, Rect{60, 65, 120, 60}) {
 		t.Errorf("halfway, the hero shows at %v", b)
 	}
+	if keyed(tt, "hero").st.world.Set {
+		t.Error("halfway, the hero is scaled rather than laid out at its size")
+	}
 	*now = now.Add(time.Second)
 	tt.Frame()
 	if b := keyed(tt, "hero").Bounds(); !nearRect(b, Rect{100, 100, 200, 100}) {
