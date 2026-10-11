@@ -443,6 +443,9 @@ func scrollBy(s *state, dx, dy float32) bool {
 	if x == s.scrollX && y == s.scrollY {
 		return false
 	}
+	if s.track != nil {
+		s.track.glide = nil // the user takes over from ScrollTo
+	}
 	s.scrollTo(x, y)
 	return true
 }
@@ -1243,6 +1246,9 @@ func (rt *engine) scrollbarPress(chain []uint64, x, y float32) bool {
 			switch {
 			case ly >= g.v.Y && ly < g.v.Y+g.v.H:
 				d.st, d.start, d.from, d.horizontal = s, ly, s.scrollY, false
+				if s.track != nil {
+					s.track.glide = nil
+				}
 				d.contentW, d.contentH = s.contentW, s.contentH
 			case ly < g.v.Y:
 				s.scrollTo(s.scrollX, max(0, s.scrollY-h*0.9))
@@ -1253,6 +1259,9 @@ func (rt *engine) scrollbarPress(chain []uint64, x, y float32) bool {
 			switch {
 			case lx >= g.h.X && lx < g.h.X+g.h.W:
 				d.st, d.start, d.from, d.horizontal = s, lx, s.scrollX, true
+				if s.track != nil {
+					s.track.glide = nil
+				}
 				d.contentW, d.contentH = s.contentW, s.contentH
 			case lx < g.h.X:
 				s.scrollTo(max(0, s.scrollX-w*0.9), s.scrollY)

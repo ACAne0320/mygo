@@ -474,4 +474,56 @@ func TestPathTrim(t *testing.T) {
 	if p := tt.Image().RGBAAt(75, 10); p.R > 200 && p.G < 50 {
 		t.Errorf("the half trimmed away is %v", p)
 	}
+	// Trimmed to almost nothing, the stroke's round caps fade rather than
+	// showing a dot that goes at once.
+	kept := float32(0.004) // 0.4 of a 4 wide stroke
+	tt = coreNewTester(func(c *context) {
+		coreBox(c).Size(100, 20).Draw(func(p *Painter, r Rect) {
+			p.StrokePath((&Path{}).MoveTo(r.X+10, r.Y+10).LineTo(r.X+110, r.Y+10).Trim(0, kept), 4, RGB(255, 0, 0))
+		})
+	}, 120, 20)
+	if p := tt.Image().RGBAAt(10, 10); p.G < 120 {
+		t.Errorf("trimmed to almost nothing, the stroke shows as %v", p)
+	}
+	kept = 0.04
+	tt.Frame()
+	if p := tt.Image().RGBAAt(10, 10); p.G > 30 {
+		t.Errorf("as long as it is wide, the stroke shows as %v", p)
+	}
+}
+
+func TestScrollToGlides(t *testing.T) {
+	var feed ScrollState
+	tt, now := clockTester(func(c *context) {
+		coreScroll(c).Size(100, 100).TrackScroll(&feed).Children(func() {
+			coreBox(c).Size(100, 1000)
+		})
+	}, 200, 200)
+	feed.ScrollTo(0, 500, Animation{Duration: 100 * time.Millisecond, Ease: Linear})
+	tt.Frame()
+	*now = now.Add(50 * time.Millisecond)
+	tt.Frame()
+	if feed.Y < 240 || feed.Y > 260 || !feed.Scrolling() {
+		t.Fatalf("halfway, scrolled to %v", feed.Y)
+	}
+	*now = now.Add(60 * time.Millisecond)
+	tt.Frame()
+	if feed.Y != 500 || feed.Scrolling() || tt.rt.animating {
+		t.Fatalf("there, scrolled to %v", feed.Y)
+	}
+	// To the end, and the user scrolling stops it.
+	feed.ScrollTo(0, math.MaxFloat32, Smooth)
+	tt.Frame()
+	*now = now.Add(30 * time.Millisecond)
+	tt.Frame()
+	tt.Scroll(50, 50, 0, -10)
+	if feed.Scrolling() {
+		t.Error("the user scrolling did not stop it")
+	}
+	y := feed.Y
+	*now = now.Add(time.Second)
+	tt.Frame()
+	if feed.Y != y {
+		t.Errorf("stopped, it went on from %v to %v", y, feed.Y)
+	}
 }
