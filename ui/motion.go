@@ -42,7 +42,7 @@ func (o SpringOptions) defaults() SpringOptions {
 // It starts at its first target. Call it in the view on each build, with a
 // stable element and key. It requests frames only while moving and snaps
 // to target while Preferences.ReduceMotion is set.
-func (e *Element) Spring(key any, target float32, options ...SpringOptions) float32 {
+func (e *node) Spring(key any, target float32, options ...SpringOptions) float32 {
 	finiteTransform(target)
 	if len(options) > 1 {
 		panic("ui: Spring takes at most one SpringOptions")
@@ -74,7 +74,7 @@ func (e *Element) Spring(key any, target float32, options ...SpringOptions) floa
 
 // SpringVelocity returns the velocity, in value units per second, of
 // the spring sampled by Spring in this build, or zero before it starts.
-func (e *Element) SpringVelocity(key any) float32 {
+func (e *node) SpringVelocity(key any) float32 {
 	if s := e.st.springs[key]; s != nil {
 		return float32(s.velocity)
 	}
@@ -151,7 +151,7 @@ type KeyframeOptions struct {
 // and key stable, and change Run when changing the sequence. Only active
 // playback asks for animation frames. Reduced motion completes playback at
 // its final value, including when the preference changes mid-sequence.
-func (e *Element) Keyframes(key any, frames []Keyframe, options ...KeyframeOptions) float32 {
+func (e *node) Keyframes(key any, frames []Keyframe, options ...KeyframeOptions) float32 {
 	if len(frames) < 2 || frames[0].At != 0 {
 		panic("ui: Keyframes needs at least two frames starting at zero")
 	}

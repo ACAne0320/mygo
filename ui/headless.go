@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -25,7 +26,9 @@ type headless struct {
 	cursor    Cursor
 	ime       platform.TextInputState
 	opened    []string
-	openErr   error
+	// escapes counts the Escapes nothing handled.
+	escapes int
+	openErr error
 	// later are what the view asked to run after the frame, as a window
 	// posts them to the main thread.
 	later  []func()
@@ -43,11 +46,22 @@ type headless struct {
 	// window shows.
 	hz     float32
 	hidden bool
+	// material tells that the window shows one (SetVibrancy).
+	material bool
+	// reading runs once as the clipboard is next read, as GTK's nested
+	// event loop may draw a frame then.
+	reading func()
 	// last is the scene of the last frame, which tests inspect.
 	last        *scene.Scene
 	dragData    transfer.Data
 	dragLocal   any
 	dragOptions transfer.DragOptions
+	// webViews are where the last frame showing web views showed them;
+	// tabbedInto the web view Tab gave the keyboard last, from its end
+	// when tabbedBack.
+	webViews   []placedWebView
+	tabbedInto NativeWebView
+	tabbedBack bool
 }
 
 func (h *headless) size() (float32, float32, float32) { return h.w, h.h, h.scale }
@@ -62,10 +76,17 @@ func (h *headless) requestFrame()                              { h.requested.Sto
 func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
-func (h *headless) readClipboard() string                      { return h.clipboard }
 func (h *headless) writeClipboard(s string)                    { h.clipboard = s }
 func (h *headless) startDrag()                                 {}
 func (h *headless) setDropFormats([]transfer.Format)           {}
+func (h *headless) readClipboard() string {
+	if r := h.reading; r != nil {
+		h.reading = nil
+		r()
+	}
+	return h.clipboard
+}
+
 func (h *headless) startDataDrag(d transfer.Data, local any, o transfer.DragOptions, x, y float32) error {
 	h.dragData, h.dragLocal, h.dragOptions = d.Snapshot(), local, o
 	return nil
@@ -79,9 +100,11 @@ func (h *headless) finishDataDrag(r transfer.Result) {
 	}
 }
 func (h *headless) titleBarDoubleClicked()            {}
+func (h *headless) escape()                           { h.escapes++ }
 func (h *headless) isDark() bool                      { return h.dark }
 func (h *headless) preferences() platform.Preferences { return h.prefs }
 func (h *headless) titleBar() TitleBar                { return h.bar }
+func (h *headless) vibrancy() bool                    { return h.material }
 func (h *headless) invalidate()                       { h.requested.Store(true) }
 
 // openURL notes the link, and gives done the error FailOpenURL set before
@@ -107,6 +130,11 @@ func (h *headless) keepAccess(t *platform.AccessTree) {
 func (h *headless) popupMenu(m *platform.Menu, x, y float32, chosen func(int)) {
 	h.menu, h.menuAt, h.chosen = m, [2]float32{x, y}, chosen
 }
+func (h *headless) placeWebViews(views []placedWebView) {
+	h.webViews = append(h.webViews[:0], views...)
+}
+func (h *headless) tabIntoWebView(v NativeWebView, back bool)      { h.tabbedInto, h.tabbedBack = v, back }
+func (h *headless) platformWebView(NativeWebView) platform.WebView { return nil }
 func (h *headless) image() *image.RGBA {
 	m := &h.img.Image
 	return &image.RGBA{Pix: m.RGBA(), Stride: 4 * m.W, Rect: image.Rect(0, 0, m.W, m.H)}
@@ -114,8 +142,8 @@ func (h *headless) image() *image.RGBA {
 
 // Render draws a frame of view in a window of width×height DIPs at scale
 // device pixels per DIP, without a window: for snapshots and tests.
-func Render(view func(c *Context), width, height int, scale float32) *image.RGBA {
-	t := NewTester(view, width, height)
+func coreRender(view func(c *context), width, height int, scale float32) *image.RGBA {
+	t := coreNewTester(view, width, height)
 	t.SetScale(scale)
 	return t.Image()
 }
@@ -131,12 +159,13 @@ type Tester struct {
 // NewTester starts testing view in a window of width×height DIPs. Two
 // elements given one key under one parent make it panic where the second
 // was given, as apps only log it.
-func NewTester(view func(c *Context), width, height int) *Tester {
+func coreNewTester(view func(c *context), width, height int) *Tester {
 	h := &headless{w: float32(width), h: float32(height), scale: 1}
 	t := &Tester{rt: newRuntime(view, h), h: h}
 	t.rt.collect = true
 	// Duplicate keys panic, so that the test fails where the key was given.
 	t.rt.strict = true
+	t.rt.handleChecks = true
 	t.settle()
 	return t
 }
@@ -178,6 +207,13 @@ func (t *Tester) SetScale(scale float32) {
 // title bar take, which Context.TitleBar returns.
 func (t *Tester) SetTitleBar(bar TitleBar) {
 	t.h.bar = bar
+	t.Frame()
+}
+
+// SetVibrancy sets whether the window shows a material where the view
+// draws no background, which Context.Vibrancy returns.
+func (t *Tester) SetVibrancy(shows bool) {
+	t.h.material = shows
 	t.Frame()
 }
 
@@ -256,9 +292,13 @@ func (t *Tester) ClickWith(mods Modifiers, s string) error {
 	return nil
 }
 
-// ClickAtWith clicks at (x, y), in DIPs, holding the modifier keys mods.
+// ClickAtWith clicks at (x, y), in DIPs, holding the modifier keys mods:
+// a web view that takes the pointer there (WebViewAt) takes the click.
 func (t *Tester) ClickAtWith(mods Modifiers, x, y float32) {
 	m := platform.Modifiers(mods)
+	if t.webViewPress(x, y, 0, m) {
+		return
+	}
 	t.send(platform.SurfaceEvent{Kind: platform.PointerDown, X: float64(x), Y: float64(y), Mods: m})
 	t.send(platform.SurfaceEvent{Kind: platform.PointerUp, X: float64(x), Y: float64(y), Mods: m})
 }
@@ -276,6 +316,9 @@ func (t *Tester) RightClick(s string) error {
 
 // RightClickAt clicks at (x, y), in DIPs, with the secondary button.
 func (t *Tester) RightClickAt(x, y float32) {
+	if t.webViewPress(x, y, 1, 0) {
+		return
+	}
 	t.send(platform.SurfaceEvent{Kind: platform.PointerDown, X: float64(x), Y: float64(y), Button: 1})
 	t.send(platform.SurfaceEvent{Kind: platform.PointerUp, X: float64(x), Y: float64(y), Button: 1})
 }
@@ -343,12 +386,39 @@ func (t *Tester) CloseMenu() { t.h.menu, t.h.chosen = nil, nil }
 
 // Press presses (x, y) without releasing; Release releases it.
 func (t *Tester) Press(x, y float32) {
+	if t.webViewPress(x, y, 0, 0) {
+		return
+	}
 	t.send(platform.SurfaceEvent{Kind: platform.PointerDown, X: float64(x), Y: float64(y)})
 }
 
 // Release releases the pointer at (x, y).
 func (t *Tester) Release(x, y float32) {
 	t.send(platform.SurfaceEvent{Kind: platform.PointerUp, X: float64(x), Y: float64(y)})
+}
+
+// WebViewAt returns the web view (WebView) that takes the pointer at
+// (x, y), as the window shows it: where the last frame showed it and
+// painted nothing over it that takes the pointer; nil for none.
+func (t *Tester) WebViewAt(x, y float32) NativeWebView {
+	for _, v := range slices.Backward(t.h.webViews) {
+		p := platform.WebViewPlacement{Clip: v.clip, Covers: v.covers}
+		if p.At(float64(x), float64(y)) {
+			return v.v
+		}
+	}
+	return nil
+}
+
+// webViewPress presses button at (x, y) on the web view taking the
+// pointer there, as the platform would, which the content only hears of,
+// and reports whether one took it.
+func (t *Tester) webViewPress(x, y float32, button int, mods platform.Modifiers) bool {
+	if t.WebViewAt(x, y) == nil {
+		return false
+	}
+	t.send(platform.SurfaceEvent{Kind: platform.WebViewPress, X: float64(x), Y: float64(y), Button: button, Mods: mods})
+	return true
 }
 
 // Move moves the pointer to (x, y).
@@ -371,6 +441,14 @@ func (t *Tester) HoldModifiers(mods Modifiers) {
 func (t *Tester) Key(mods Modifiers, key Key) {
 	t.send(platform.SurfaceEvent{Kind: platform.KeyPressed, Key: platform.Key(key), Mods: platform.Modifiers(mods)})
 	t.send(platform.SurfaceEvent{Kind: platform.KeyReleased, Key: platform.Key(key), Mods: platform.Modifiers(mods)})
+}
+
+// KeyAt presses a key that the active layout does not type as a US key
+// (Key is KeyUnknown), at position physical of an ANSI US keyboard, as S
+// is pressed on a Cyrillic layout.
+func (t *Tester) KeyAt(mods Modifiers, physical Key) {
+	t.send(platform.SurfaceEvent{Kind: platform.KeyPressed, PhysicalKey: platform.Key(physical), Mods: platform.Modifiers(mods)})
+	t.send(platform.SurfaceEvent{Kind: platform.KeyReleased, PhysicalKey: platform.Key(physical), Mods: platform.Modifiers(mods)})
 }
 
 // TypeKey presses a key that types text, as a keyboard does: the key goes

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func motionTester(view func(*Context)) (*Tester, *time.Time) {
+func motionTester(view func(*context)) (*Tester, *time.Time) {
 	now := time.Unix(1000, 0)
 	h := &headless{w: 300, h: 150, scale: 1}
 	tt := &Tester{h: h, rt: newRuntime(view, h)}
@@ -19,8 +19,8 @@ func motionTester(view func(*Context)) (*Tester, *time.Time) {
 func TestSpringRetargetKeepsVelocityBetweenFrames(t *testing.T) {
 	target := float32(0)
 	var value, velocity float32
-	var e *Element
-	tt, now := motionTester(func(c *Context) { e = Box(c); value = e.Spring("x", target); velocity = e.SpringVelocity("x") })
+	var e *node
+	tt, now := motionTester(func(c *context) { e = coreBox(c); value = e.Spring("x", target); velocity = e.SpringVelocity("x") })
 	target = 100
 	tt.Frame()
 	*now = now.Add(120 * time.Millisecond)
@@ -73,7 +73,7 @@ func TestKeyframeTimingRestartAndAlternate(t *testing.T) {
 	var value float32
 	run := uint64(0)
 	frames := []Keyframe{{At: 0, Value: 0}, {At: 100 * time.Millisecond, Value: 10}, {At: 300 * time.Millisecond, Value: 30, Ease: EaseIn}}
-	tt, now := motionTester(func(c *Context) { value = Box(c).Keyframes("sequence", frames, KeyframeOptions{Run: run}) })
+	tt, now := motionTester(func(c *context) { value = coreBox(c).Keyframes("sequence", frames, KeyframeOptions{Run: run}) })
 	*now = now.Add(100 * time.Millisecond)
 	tt.Frame()
 	closeFloat(t, value, 10)
@@ -108,8 +108,8 @@ func TestMotionReducedMidFlightAndInfiniteSequences(t *testing.T) {
 	target := float32(0)
 	run := uint64(0)
 	var spring, eased, keyframed float32
-	tt, now := motionTester(func(c *Context) {
-		e := Box(c)
+	tt, now := motionTester(func(c *context) {
+		e := coreBox(c)
 		spring = e.Spring("spring", target)
 		eased = e.Animate("ease", target, time.Second)
 		keyframed = e.Keyframes("keys", []Keyframe{{Value: 0}, {At: time.Second, Value: 20}}, KeyframeOptions{Repeat: -1, Run: run})
@@ -140,10 +140,10 @@ func TestMotionReducedMidFlightAndInfiniteSequences(t *testing.T) {
 }
 
 func TestMotionRejectsInvalidParameters(t *testing.T) {
-	for _, view := range []func(*Context){
-		func(c *Context) { Box(c).Spring("x", 0, SpringOptions{Mass: -1}) },
-		func(c *Context) { Box(c).Keyframes("x", []Keyframe{{At: time.Second}, {At: 2 * time.Second}}) },
-		func(c *Context) { Box(c).Keyframes("x", []Keyframe{{}, {At: time.Second}, {At: time.Second}}) },
+	for _, view := range []func(*context){
+		func(c *context) { coreBox(c).Spring("x", 0, SpringOptions{Mass: -1}) },
+		func(c *context) { coreBox(c).Keyframes("x", []Keyframe{{At: time.Second}, {At: 2 * time.Second}}) },
+		func(c *context) { coreBox(c).Keyframes("x", []Keyframe{{}, {At: time.Second}, {At: time.Second}}) },
 	} {
 		func() {
 			defer func() {
@@ -151,7 +151,7 @@ func TestMotionRejectsInvalidParameters(t *testing.T) {
 					t.Error("invalid motion accepted")
 				}
 			}()
-			NewTester(view, 100, 100)
+			coreNewTester(view, 100, 100)
 		}()
 	}
 }
@@ -159,7 +159,7 @@ func TestMotionRejectsInvalidParameters(t *testing.T) {
 func TestSpringSchedulingWhileOccluded(t *testing.T) {
 	target := float32(0)
 	var value float32
-	tt := newRepaintTester(func(c *Context) { e := Box(c).Size(30, 20); value = e.Spring("x", target); e.Translate(value, 0) })
+	tt := newRepaintTester(func(c *context) { e := coreBox(c).Size(30, 20); value = e.Spring("x", target); e.Translate(value, 0) })
 	tt.h.hidden = true
 	target = 100
 	tt.rt.requestFrame()

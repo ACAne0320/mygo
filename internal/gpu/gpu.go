@@ -19,11 +19,13 @@
 // glyphs, whose subpixels cover each channel by its own. Renderers blend
 // with dual-source blending: the destination times one minus the second
 // color, plus the first.
+//
+// A hole (scene.OpHole) is an opaque fill in a batch of its own, which
+// renderers blend with none of the source: the destination times one
+// minus the second color, its coverage, which leaves it transparent.
 package gpu
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -31,15 +33,6 @@ import (
 
 	"github.com/egoist/mygo/internal/scene"
 )
-
-// SourceSum returns the SHA-256, in hex, of a shader's source as the
-// repository holds it, with LF line endings, which shaders compiled ahead
-// of time record: the source matches them however it was checked out, as
-// with CRLF endings on Windows.
-func SourceSum(src string) string {
-	sum := sha256.Sum256([]byte(strings.ReplaceAll(src, "\r\n", "\n")))
-	return hex.EncodeToString(sum[:])
-}
 
 // GoBytes returns the Go declaration of a variable name holding b, as
 // code compiled ahead of time is generated.
@@ -82,10 +75,11 @@ type Instance struct {
 	// Clip and ClipRadii are the innermost clip, which the shader cuts.
 	Clip, ClipRadii [4]float32
 	// Params is the kind (0 fill, 1 shadow, 2 mask glyph, 3 color glyph, 4
-	// image, 5 subpixel glyph, 6 effect); 1 for a dashed border or a
-	// grayscale image; the shadow's sigma (0 for none), the paint
-	// (scene.Paint) or the size of the squares an effect's backdrop
-	// averages; and the opacity.
+	// image, 5 subpixel glyph, 6 effect); 1 for a dashed border, a
+	// grayscale image or an inner shadow, whose box is in Rect and Radii
+	// and the hole it leaves in UV and Inner (none when empty); the
+	// shadow's sigma (0 for none), the paint (scene.Paint) or the size of
+	// the squares an effect's backdrop averages; and the opacity.
 	Params [4]float32
 	// Transform rows map local pixels to the frame. Transform0.w enables
 	// transformed antialiasing, Transform1.w selects a cached clip mask.
@@ -117,6 +111,9 @@ type Batch struct {
 	// drawing it.
 	Effect   *scene.Effect
 	Backdrop int
+	// Hole tells that the batch's instances make their shapes transparent
+	// (scene.OpHole): renderers blend them with a source factor of zero.
+	Hole bool
 }
 
 // Builder builds the instances and batches of scenes, reusing its memory
@@ -253,6 +250,26 @@ func (b *Builder) Build(s *scene.Scene, image func(*scene.Image) uintptr) *scene
 				Params: [4]float32{0, dashed, float32(op.Paint), opacity(op.Opacity)},
 			}, 0, op.Transform)
 		case scene.OpShadow:
+			if op.Inset {
+				// The box in Rect, the hole in UV and Inner, which an
+				// inner shadow's 1 in Params[1] tells.
+				if op.Cast.Empty() {
+					continue
+				}
+				sigma := op.Blur / 2
+				if sigma < 0.5 {
+					sigma = 0
+				}
+				in := Instance{
+					Rect: rect(op.Cast), Radii: scene.Corners(op.Cast, op.CastRadii, op.Continuous),
+					Color: wideColor(b.wideOf(s, op.Wide), scene.WideColor, op.Color), Params: [4]float32{1, 1, sigma, opacity(op.Opacity)},
+				}
+				if !op.Rect.Empty() {
+					in.UV, in.Inner = rect(op.Rect), scene.Corners(op.Rect, op.Radii, op.Continuous)
+				}
+				b.add(in, 0, op.Transform)
+				continue
+			}
 			if op.Rect.Empty() {
 				continue
 			}
@@ -312,6 +329,10 @@ func (b *Builder) Build(s *scene.Scene, image func(*scene.Image) uintptr) *scene
 			if !op.Rect.Empty() && int(op.Start) < len(s.Effects) && s.Effects[op.Start].Effect != nil {
 				b.addEffect(s, op)
 			}
+		case scene.OpHole:
+			if !op.Rect.Empty() {
+				b.addHole(op)
+			}
 		case scene.OpImage:
 			img := op.Image
 			if img == nil || op.Rect.Empty() || img.W == 0 || img.H == 0 {
@@ -354,7 +375,8 @@ func (b *Builder) add(in Instance, image uintptr, m scene.Affine) {
 		return
 	}
 	n := len(b.Batches)
-	if n == 0 || b.Batches[n-1].Scissor != cur.scissor || b.Batches[n-1].Effect != nil || b.Batches[n-1].ClipMask != b.preparedMask ||
+	if n == 0 || b.Batches[n-1].Scissor != cur.scissor || b.Batches[n-1].Effect != nil || b.Batches[n-1].Hole ||
+		b.Batches[n-1].ClipMask != b.preparedMask ||
 		(image != 0 && b.Batches[n-1].Image != 0 && b.Batches[n-1].Image != image) {
 		b.Batches = append(b.Batches, Batch{Start: len(b.Instances), Scissor: cur.scissor, Image: image, ClipMask: b.preparedMask})
 		n++
@@ -397,6 +419,26 @@ func (b *Builder) addEffect(s *scene.Scene, op *scene.Op) {
 	}
 	b.Batches = append(b.Batches, batch)
 	b.Instances = append(b.Instances, in)
+}
+
+// addHole appends a hole within the current clip, in a batch of holes:
+// an opaque fill, whose coverage the renderers take away.
+func (b *Builder) addHole(op *scene.Op) {
+	cur := &b.stack[len(b.stack)-1]
+	in := Instance{
+		Rect: rect(op.Rect), Radii: scene.Corners(op.Rect, op.Radii, op.Continuous),
+		Color:  [4]float32{0, 0, 0, 1},
+		Params: [4]float32{0, 0, float32(scene.PaintSolid), opacity(op.Opacity)},
+	}
+	if !b.prepare(&in, op.Transform, cur) {
+		return
+	}
+	if n := len(b.Batches); n == 0 || !b.Batches[n-1].Hole || b.Batches[n-1].Scissor != cur.scissor ||
+		b.Batches[n-1].ClipMask != b.preparedMask {
+		b.Batches = append(b.Batches, Batch{Start: len(b.Instances), Scissor: cur.scissor, Hole: true, ClipMask: b.preparedMask})
+	}
+	b.Instances = append(b.Instances, in)
+	b.Batches[len(b.Batches)-1].Count++
 }
 
 func rect(r scene.Rect) [4]float32 { return [4]float32{r.X, r.Y, r.W, r.H} }

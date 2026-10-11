@@ -78,7 +78,7 @@ func (s *SVG) imageSize() (float32, float32) {
 //		ui.Icon(c, save)
 //		ui.Text(c, "Save")
 //	})
-func Icon(c *Context, s *SVG) *Element {
+func coreIcon(c *context, s *SVG) *node {
 	e := c.newElement(kindIcon)
 	e.svg = s
 	if s != nil && s.h > 0 {
@@ -90,11 +90,15 @@ func Icon(c *Context, s *SVG) *Element {
 // Icon draws the shapes of an SVG fitted in r, in color c.
 func (p *Painter) Icon(s *SVG, r Rect, c Color) { p.drawIcon(s, r, c, 0) }
 
-// Rotate rotates an element clockwise around its transform origin. Icons
-// retain their existing rotation of the SVG artwork around its center;
-// use Transform(Rotation(degrees)) to rotate an icon's entire border box.
-// Rotation changes no layout sizes.
-func (e *Element) Rotate(degrees float32) *Element {
+// Rotate rotates an element clockwise around its transform origin, which
+// changes no layout sizes. An Icon keeps turning its SVG artwork around its
+// center, as a spinner does:
+//
+//	spin := ui.Icon(c, loader)
+//	spin.Rotate(spin.Loop("spin", time.Second, ui.Linear) * 360)
+//
+// Use Transform(Rotation(degrees)) to rotate an icon's entire border box.
+func (e *node) Rotate(degrees float32) *node {
 	finiteTransform(degrees)
 	if e.kind == kindIcon {
 		e.rotate = degrees
@@ -105,7 +109,7 @@ func (e *Element) Rotate(degrees float32) *Element {
 }
 
 // Grayscale draws the element's image, or icon, in shades of gray.
-func (e *Element) Grayscale() *Element { e.gray = true; return e }
+func (e *node) Grayscale() *node { e.gray = true; return e }
 
 // svgs holds what the engine reuses to draw SVGs: the job of drawing an
 // icon's mask, the pixels it draws them into, and the pictures of SVGs

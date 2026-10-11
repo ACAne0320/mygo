@@ -3,6 +3,7 @@ package ui
 import (
 	"math"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo/internal/scene"
@@ -18,10 +19,24 @@ type Painter struct {
 	opacity   float32
 	clip      Rect
 	transform scene.Affine
-	inline    *Element
-	// opaque tells that the root's background covers the window, which
-	// subpixel glyphs need.
+	inline    *node
+	// opaque tells that the glyphs painted now land on an opaque
+	// background, which subpixel glyphs need: the root's, covering the
+	// window, or that of an element around them, as a pane beside a
+	// sidebar over the window's material. under holds the boxes of the
+	// elements painting with an opaque background around the one painting.
+	// holes are those painted for web views (WebView) since the frame
+	// began, under which nothing is opaque.
 	opaque bool
+	under  []opaqueBox
+	holes  []Rect
+}
+
+// opaqueBox is the box of an element painting an opaque background, and
+// how many holes were painted before it, which it covers.
+type opaqueBox struct {
+	r     Rect
+	holes int
 }
 
 // continuousCorners curves rounded corners as Apple does, on macOS, where
@@ -29,7 +44,7 @@ type Painter struct {
 // elsewhere, as Windows and GTK draw them.
 const continuousCorners = runtime.GOOS == "darwin"
 
-func (rt *engine) paint(root *Element, w, h, scale float32) {
+func (rt *engine) paint(root *node, w, h, scale float32) {
 	s := &rt.scene
 	// The root paints the theme's background: frames start transparent, so
 	// that a transparent root shows what is behind the content, such as a
@@ -41,13 +56,19 @@ func (rt *engine) paint(root *Element, w, h, scale float32) {
 	opaque := root.bg.A == 255 && root.fill == fillColor && (!root.opacitySet || root.opacity >= 1)
 	// The painter is the engine's, which draw callbacks get, so that
 	// painting allocates none.
-	rt.painter = Painter{rt: rt, s: s, scale: scale, opacity: 1, clip: Rect{0, 0, w, h}, opaque: opaque}
+	under := rt.under[:0]
+	if opaque {
+		// Under all the window paints, as what it drags.
+		under = append(under, opaqueBox{r: Rect{0, 0, w, h}})
+	}
+	rt.painter = Painter{rt: rt, s: s, scale: scale, opacity: 1, clip: Rect{0, 0, w, h}, opaque: opaque, under: under, holes: rt.holes[:0]}
 	p := &rt.painter
 	p.element(root)
 	if rt.insp.open {
 		rt.insp.paintHighlight(rt, p, h)
 	}
 	rt.paintDrag(p, w, h)
+	rt.under, rt.holes = p.under[:0], p.holes[:0] // kept for the next frame's
 }
 
 // Now returns the time of the frame being painted, which drawings that
@@ -95,13 +116,10 @@ func (p *Painter) visible(r Rect, margin float32) bool {
 		r.X+r.W+margin > p.clip.X && r.Y+r.H+margin > p.clip.Y
 }
 
-func (p *Painter) element(e *Element) {
-	savedTransform, savedOpaque, savedInline := p.transform, p.opaque, p.inline
+func (p *Painter) element(e *node) {
+	savedTransform, savedInline := p.transform, p.inline
 	p.transform, p.inline = e.world, nil
-	if e.world.Set {
-		p.opaque = false
-	}
-	defer func() { p.transform, p.opaque, p.inline = savedTransform, savedOpaque, savedInline }()
+	defer func() { p.transform, p.inline = savedTransform, savedInline }()
 
 	if e.styleFn != nil {
 		e.styleFn(e)
@@ -128,9 +146,22 @@ func (p *Painter) element(e *Element) {
 		return
 	}
 	box := Rect{e.x, e.y, e.w, e.h}
+	savedOpaque, under := p.opaque, len(p.under)
+	if e.fill == fillColor && e.bg.A == 255 && p.opacity >= 1 {
+		p.under = append(p.under, opaqueBox{box, len(p.holes)})
+	}
+	// What the element paints lands on an opaque background when all of
+	// it that shows does.
+	p.opaque = p.covered(intersect(box, p.clip))
+	if e.world.Set {
+		// Transformed glyphs are drawn with grayscale coverage.
+		p.opaque = false
+	}
 	margin := float32(0)
 	for _, sh := range e.shadows {
-		margin = max(margin, abs32(sh.x)+abs32(sh.y)+sh.blur+sh.spread)
+		if !sh.inset {
+			margin = max(margin, abs32(sh.x)+abs32(sh.y)+sh.blur+sh.spread)
+		}
 	}
 	clips := e.flags&(flagClipX|flagClipY|flagScrollX|flagScrollY) != 0
 	// What an element clips meets its border where both are smoothed, on
@@ -143,9 +174,20 @@ func (p *Painter) element(e *Element) {
 	}
 	if own {
 		for _, sh := range e.shadows {
-			p.shadow(box, e.radius, sh)
+			if !sh.inset {
+				p.shadow(box, e.radius, sh)
+			}
 		}
 		p.background(e, box, !borderOver)
+		if e.webView != nil {
+			p.hole(e)
+		}
+		// Over a web view's page, as over a background.
+		for _, sh := range e.shadows {
+			if sh.inset {
+				p.insetShadow(box, e.radius, e.border, sh)
+			}
+		}
 		if e.paintFn != nil {
 			e.paintFn(p, box)
 		}
@@ -224,12 +266,33 @@ func (p *Painter) element(e *Element) {
 		p.FocusRing(box, e.radius)
 	}
 	p.opacity = saved
+	p.opaque, p.under = savedOpaque, p.under[:under]
+}
+
+// covered reports whether an opaque background around the element painting
+// holds all of r, when r has an area.
+func (p *Painter) covered(r Rect) bool {
+	if r.W <= 0 || r.H <= 0 {
+		return true
+	}
+	for _, u := range slices.Backward(p.under) {
+		if b := u.r; r.X >= b.X && r.Y >= b.Y && r.X+r.W <= b.X+b.W && r.Y+r.H <= b.Y+b.H {
+			// Unless the web view of a hole painted since shows there.
+			for _, h := range p.holes[u.holes:] {
+				if i := intersect(r, h); i.W > 0 && i.H > 0 {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // clipRect returns the box an element clips its children to, inside its
 // border, and its radii: as far as the clip reaches along an axis it does
 // not clip.
-func (e *Element) clipRect() (Rect, [4]float32) {
+func (e *node) clipRect() (Rect, [4]float32) {
 	r := Rect{e.x + e.border[3], e.y + e.border[0], e.w - e.border[1] - e.border[3], e.h - e.border[0] - e.border[2]}
 	var rad [4]float32
 	all := e.flags&(flagScrollX|flagScrollY) != 0 || e.flags&flagClip == flagClip
@@ -274,7 +337,7 @@ func (p *Painter) fill(r Rect, radius [4]float32, bg Color, bw float32, bc Color
 
 // background paints the background of an element, and its border with it
 // unless withBorder is false.
-func (p *Painter) background(e *Element, box Rect, withBorder bool) {
+func (p *Painter) background(e *node, box Rect, withBorder bool) {
 	border := withBorder && scene.HasBorder(e.border) && e.borderC.A > 0
 	if e.fill == fillMaterial {
 		e.material.PaintMaterial(p, box, e.radius)
@@ -319,7 +382,7 @@ func (p *Painter) background(e *Element, box Rect, withBorder bool) {
 }
 
 // border paints e's border alone.
-func (p *Painter) border(e *Element, box Rect) {
+func (p *Painter) border(e *node, box Rect) {
 	p.add(scene.Op{Kind: scene.OpFill, Rect: p.snap(box), Radii: p.radii(e.radius), Continuous: continuousCorners, Opacity: p.opacity,
 		Border: p.borders(e.border), BorderColor: e.borderC.scene(), Dashed: e.borderStyle == BorderDashed, Wide: p.wide(Color{}, Color{}, e.borderC)})
 }
@@ -355,7 +418,7 @@ func (p *Painter) gradient(op *scene.Op, g LinearGradient) {
 // middle of the room between each two: after each row of a List but its
 // last, else between children next to each other in the tree, on the same
 // line.
-func (p *Painter) dividers(e *Element) {
+func (p *Painter) dividers(e *node) {
 	var d dividers
 	for _, d = range e.c.dividers {
 		if d.e == e {
@@ -375,7 +438,7 @@ func (p *Painter) dividers(e *Element) {
 	if !row {
 		lo, hi = e.x+e.border[3], e.x+e.w-e.border[1]
 	}
-	var prev *Element
+	var prev *node
 	for c := e.first; c != nil; c = c.next {
 		if c.flags&flagAbsolute != 0 || c.collapsed {
 			continue
@@ -428,11 +491,11 @@ func (p *Painter) divider(row bool, at, lo, hi, width float32, c Color) {
 
 // debug outlines an element and the elements inside it: their margins in
 // orange, borders and padding in green, and content in blue.
-func (p *Painter) debug(e *Element) {
+func (p *Painter) debug(e *node) {
 	saved := p.opacity
 	p.opacity = 1
-	var walk func(e *Element)
-	walk = func(e *Element) {
+	var walk func(e *node)
+	walk = func(e *node) {
 		if e.flags&flagInvisible != 0 {
 			return
 		}
@@ -654,11 +717,11 @@ func (p *Painter) wave(x0, x1, y, thick float32, c Color) {
 }
 
 // contentBox returns the element's box inside its padding and border.
-func (e *Element) contentBox() Rect {
+func (e *node) contentBox() Rect {
 	return Rect{e.x + e.contentX(), e.y + e.contentY(), e.w - e.padX(), e.h - e.padY()}
 }
 
-func (p *Painter) image(e *Element) {
+func (p *Painter) image(e *node) {
 	if s := e.svg; s != nil {
 		p.drawSVG(s, e.contentBox(), e.fit, e.radius, e.resolvedText().color, e.gray)
 		return
@@ -710,7 +773,7 @@ func (p *Painter) drawBitmap(img *Bitmap, box Rect, fit Fit, radius [4]float32, 
 
 // scrollbars draws the thumbs of a scroll container whose content
 // overflows it.
-func (p *Painter) scrollbars(e *Element) {
+func (p *Painter) scrollbars(e *node) {
 	st := e.st
 	rt := e.c.rt
 	theme := e.c.theme
@@ -844,7 +907,7 @@ func (p *Painter) StrokeDashed(r Rect, c Color, radius, width float32) {
 // only outside the rectangle, so that it does not show through what is
 // drawn there.
 func (p *Painter) Shadow(r Rect, radius, x, y, blur, spread float32, c Color) {
-	p.shadow(r, [4]float32{radius, radius, radius, radius}, shadow{x, y, blur, spread, c})
+	p.shadow(r, [4]float32{radius, radius, radius, radius}, shadow{x, y, blur, spread, c, false})
 }
 
 // shadow paints the shadow sh of box, rounded by rad, outside box, as
@@ -859,6 +922,33 @@ func (p *Painter) shadow(box Rect, rad [4]float32, sh shadow) {
 	}
 	p.add(scene.Op{Kind: scene.OpShadow, Rect: p.snap(r), Radii: p.radii(grown), Continuous: continuousCorners, Color: sh.color.scene(),
 		Wide: p.wide(sh.color, Color{}, Color{}), Blur: sh.blur * p.scale, Cast: p.snap(box), CastRadii: p.radii(rad), Opacity: p.opacity})
+}
+
+// insetShadow paints the inner shadow sh of box, rounded by rad, inside
+// its padding edge, within a border of widths bw, as CSS's box-shadow:
+// inset does.
+func (p *Painter) insetShadow(box Rect, rad, bw [4]float32, sh shadow) {
+	pad := p.snap(box)
+	padRadii := scene.FitRadii(pad, p.radii(rad))
+	if scene.HasBorder(bw) {
+		pad, padRadii = scene.InnerRadii(pad, padRadii, p.borders(bw))
+	}
+	if pad.Empty() {
+		return
+	}
+	// The hole the shadow leaves: the padding box offset and shrunk by
+	// the spread.
+	s := p.scale
+	spread := sh.spread * s
+	hole := scene.Rect{X: pad.X + round(sh.x*s) + spread, Y: pad.Y + round(sh.y*s) + spread, W: max(pad.W-2*spread, 0), H: max(pad.H-2*spread, 0)}
+	holeRadii := padRadii
+	for i := range holeRadii {
+		if holeRadii[i] > 0 {
+			holeRadii[i] = max(holeRadii[i]-spread, 0)
+		}
+	}
+	p.add(scene.Op{Kind: scene.OpShadow, Inset: true, Rect: hole, Radii: holeRadii, Continuous: continuousCorners, Color: sh.color.scene(),
+		Wide: p.wide(sh.color, Color{}, Color{}), Blur: sh.blur * s, Cast: pad, CastRadii: padRadii, Opacity: p.opacity})
 }
 
 // Line paints a straight horizontal or vertical line between two points,

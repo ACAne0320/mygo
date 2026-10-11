@@ -49,7 +49,7 @@ type area struct {
 
 // wrappedHeight returns the height of the text, with an input method's
 // composition, wrapped at the content width cw.
-func (a *area) wrappedHeight(e *Element, ed *editor, cw float32) float32 {
+func (a *area) wrappedHeight(e *node, ed *editor, cw float32) float32 {
 	params := e.textParams(max(cw, 1))
 	if ed.buf.indexed {
 		params.KeepSpaces, params.MaxLines = true, 0
@@ -64,9 +64,8 @@ func (a *area) wrappedHeight(e *Element, ed *editor, cw float32) float32 {
 				if ed.compose != "" && p == ed.buf.para(ed.caret) {
 					at := runeOffset(part.Text, ed.caret-ed.buf.start(p))
 					part.Text = part.Text[:at] + ed.compose + part.Text[at:]
-				} else {
-					part.Spans, _ = ed.rangeSpans(ed.buf.start(p), ed.buf.end(p))
 				}
+				part.Spans, _ = ed.rangeSpans(ed.buf.start(p), ed.buf.end(p))
 				height += textSystem().Shape(part).Height
 			}
 			a.wrapped, a.wrappedParams, a.wrappedVersion = height, params, ed.buf.version
@@ -76,10 +75,8 @@ func (a *area) wrappedHeight(e *Element, ed *editor, cw float32) float32 {
 	}
 	params.Text = ed.displayText()
 	params.KeepSpaces, params.MaxLines = true, 0
-	if ed.compose == "" {
-		// Bold runs take more room, so the text may wrap sooner.
-		params.Spans, _ = ed.rangeSpans(0, ed.buf.n)
-	}
+	// Bold runs take more room, so the text may wrap sooner.
+	params.Spans, _ = ed.rangeSpans(0, ed.buf.n)
 	if params != a.wrappedParams {
 		a.wrappedParams = params
 		a.wrapped = textSystem().Layout(params).Height
@@ -160,10 +157,7 @@ func (a *area) paraLayout(ed *editor, p int) *text.Layout {
 	if ed.compose != "" && p == b.para(ed.caret) {
 		compose = ed.compose
 	}
-	spans := ""
-	if compose == "" {
-		spans, _ = ed.rangeSpans(b.start(p), b.end(p))
-	}
+	spans, _ := ed.rangeSpans(b.start(p), b.end(p))
 	if pr.layout != nil && pr.compose == compose && pr.spans == spans {
 		return pr.layout
 	}
@@ -302,7 +296,7 @@ func (a *area) setScroll(y float64) {
 // layout lays the text area out in a content box of cw×ch: the
 // paragraphs in view, the caret's when it is to be revealed, and where the
 // view is.
-func (a *area) layout(e *Element, cw, ch float32) {
+func (a *area) layout(e *node, cw, ch float32) {
 	ed := e.st.editor
 	b := &ed.buf
 	params := e.textParams(cw)
@@ -389,7 +383,7 @@ func (a *area) forget(b *buffer) {
 
 // paint paints the paragraphs in view, the selection, the composition and
 // the caret, with the content's top at oy.
-func (a *area) paint(e *Element, p *Painter, ox, oy float32) {
+func (a *area) paint(e *node, p *Painter, ox, oy float32) {
 	ed := e.st.editor
 	b := &ed.buf
 	t := e.c.theme
@@ -412,10 +406,7 @@ func (a *area) paint(e *Element, p *Painter, ox, oy float32) {
 				}
 			}
 		}
-		var sp *spanPaint
-		if pr := &b.paras[i]; pr.compose == "" {
-			_, sp = ed.rangeSpans(start, end)
-		}
+		_, sp := ed.rangeSpans(start, end)
 		p.textLayout(l, ox, y, ts.color, ts, sp)
 		if ed.compose != "" && b.para(ed.caret) == i {
 			c := ed.caret - start

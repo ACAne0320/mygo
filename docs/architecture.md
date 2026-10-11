@@ -25,7 +25,9 @@ framework safely. Read it before changing anything under `internal/`.
   on Windows (amd64 and arm64); no browser engine is bundled. Native UI is
   drawn by MyGo itself, in Go, with Metal, Direct3D 11 or OpenGL, or on the
   CPU, and text from the system's own engines (see [Native UI](#native-ui-ui));
-  an app whose windows all show it needs no webview at all. On unsupported
+  an app whose windows all show it needs no webview at all, and runs in
+  browsers too, compiled to WebAssembly, on canvases drawn with WebGL 2
+  (see [Browsers](#browsers-internalweb)). On unsupported
   platforms the `internal/unsupported` backend makes `App.Run` fail with a
   clear error while everything still compiles.
 - **Bun is dev tooling only.** It builds and tests the TypeScript bridge, and
@@ -44,8 +46,10 @@ framework safely. Read it before changing anything under `internal/`.
 .                       package mygo: the public API
 ├── app.go              lifecycle, quit sequence, Dock, paths (paths.go)
 ├── window.go           Window: the native window, its options, state and events
+├── flyout.go           NewFlyout: windows owned by a parent, placed next to an anchor
 ├── page.go             Page: the web page a window shows, its loading, Eval and events
 ├── content.go          Content: windows showing native UI instead of a page
+├── webview.go          WebView: web pages in windows of native UI, under it
 ├── ipc.go              Bind/BindAs, method calls, Event[T], CallerWindow
 ├── plugin.go           Plugin and Use: services bound as "plugin:<name>"
 ├── channel.go          Channel[T]: values streamed to a call's page
@@ -64,6 +68,7 @@ framework safely. Read it before changing anything under `internal/`.
 │   ├── darwin/         macOS: AppKit + WKWebView through the Objective-C runtime
 │   ├── linux/          Linux: GTK 3 + WebKitGTK through dlopen
 │   ├── windows/        Windows: Win32 + WebView2 through syscall and COM
+│   ├── web/            browsers (js/wasm): native UI on canvases, through syscall/js
 │   ├── unsupported/    stub for other platforms
 │   ├── fake/           in-memory backend for unit tests
 │   ├── bridge/         embeds bridge.js, built from packages/bridge
@@ -75,7 +80,7 @@ framework safely. Read it before changing anything under `internal/`.
 │   ├── gpu/            the instances GPU renderers draw, and gputest/ for their tests
 │   ├── gpu/d3d11/      the Direct3D 11 renderer of scenes, and device/ for its devices
 │   ├── gpu/metal/      the Metal renderer of scenes
-│   ├── gpu/gl/         the OpenGL renderer of scenes
+│   ├── gpu/gl/         the OpenGL and WebGL 2 renderer of scenes
 │   ├── svg/            SVG parsing and drawing, for icons and images
 │   ├── tsgen/          TypeScript client generator
 │   ├── accelerator/    parses "CmdOrCtrl+Shift+K"
@@ -96,8 +101,9 @@ framework safely. Read it before changing anything under `internal/`.
 ├── ui/                 native UI: views, layout, widgets, text editing, Tester
 ├── transfer/           immutable data items, representations, lazy providers and drag effects
 ├── cmd/mygo/           the CLI: init, generate, dev, build, doctor
-├── examples/           hello, todo, frameless, native, vibrancy; counter-native
-│                       and gallery (native UI)
+├── examples/           hello, todo, frameless, native; counter-native, vibrancy,
+│                       effort-slider, flyout, menubar-flyout and gallery
+│                       (native UI); webview (web views in native UI)
 ├── docs/               the user guides, the official plugins' pages
 │                       (plugins/), and this architecture guide
 └── website/            the website, with these docs: TanStack Start, prerendered
@@ -107,7 +113,7 @@ framework safely. Read it before changing anything under `internal/`.
 ## Layers
 
 ```
- user code ──► package mygo ──► platform.Backend ──► darwin | linux | windows | unsupported
+ user code ──► package mygo ──► platform.Backend ──► darwin | linux | windows | web | unsupported
                  ▲    │               ▲                  │
                  │    └─ handlers ────┘ (AppHandler,     └─ purego ─► AppKit/WebKit, GTK/WebKitGTK
                  │                       WindowHandler)
@@ -262,18 +268,41 @@ purego gives three primitives, used everywhere:
 - The main thread is the one that called `gtk_init_check`; `IsMainThread`
   compares `gettid`. `Step` is `g_main_context_iteration(NULL, TRUE)` and
   `Wake` is `g_main_context_wakeup`.
+- `Bounds` are those of the frame a reparenting X11 window manager puts
+  around the window (`gdk_window_get_frame_extents`): GTK positions the
+  frame (NORTH_WEST gravity) and sizes the window inside it, without the
+  frame. `ContentBounds` are where the content widget is
+  (`gdk_window_get_origin` plus its offset below the menu bar). The
+  frame's extents are known once the window manager framed the window
+  that shows, which its first synthetic configure report tells; until
+  then a window expects the frame it had, or the one seen last around a
+  decorated window that is resizable or not as it is (openbox: 1, 20, 1
+  and 5 px at the bottom, or 1). Wayland has no frame in `Bounds`.
 - GTK geometry changes are asynchronous: `SetBounds` remembers the requested
-  rectangle, within the sizes GTK gives the window (`constrain`), as does a
-  window about to show, which X has where GTK created it, or where it was,
-  until the window manager places it; `Center` moves that rectangle along.
-  `Bounds` reports that rectangle until a configure event reports its size
-  and, on X11, its position, or the window manager's own (synthetic)
-  report of the size comes, or another size, which the window manager or
-  the user chose. A window being placed waits for the window manager's
-  report: a reparenting one first puts its frame where it created it. A
-  report of the previous size was sent before the window manager took the
-  request (openbox sends one when the size hints change); GTK would ask
-  for that size again from it, so the backend asks for the new one again.
+  rectangle, within the sizes GTK gives the window (`constrain`), with the
+  frame it expects, as does a window about to show, which X has where GTK
+  created it, or where it was, until the window manager places it;
+  `Center` moves that rectangle along. `Bounds` reports that rectangle
+  until a configure event reports its size and, on X11, its position, or
+  the window manager's own (synthetic) report of the size comes, or
+  another size, which the window manager or the user chose. A window being
+  placed waits for the window manager's report: a reparenting one first
+  puts its frame where it created it. If the frame is not the one
+  expected, the rectangle grows with it around the size asked for inside
+  it (`SetContentBounds`, `UseContentSize`, a window that showed before),
+  or GTK is asked for the size inside the new frame. A report of the
+  previous size was sent before the window manager took the request
+  (openbox sends one when the size hints change); GTK would ask for that
+  size again from it, so the backend asks for the new one again.
+- On Wayland, the configure event that activates a window can carry the
+  size of the last buffer it drew, from before a resize GTK already took
+  (Mutter sends one when native UI drawing with GL resizes from its first
+  frames), and GTK goes back to that size. So a window drawing with GL
+  keeps the latest bounds asked for while it is not focused, and once it
+  is, an idle callback asks for them again if the window went back to the
+  size it had, unless it is maximized, full screen or tiled. GTK skips a
+  request for the size it asked for last: the callback first takes the
+  configure and asks for the size the window has.
 - A window the user cannot resize is never smaller than its default size,
   which `SetBounds` sets too, and `SetResizable(false)` to the size it has,
   or than its natural size, which GTK makes 200x200 when the window's child
@@ -417,7 +446,8 @@ purego gives three primitives, used everywhere:
   the z-order when it appears. A window without a caption has no room for
   its menu bar: Alt and F10 open a popup holding the bar's own submenus.
 - **Vibrancy** sets `DWMWA_SYSTEMBACKDROP_TYPE` (Windows 11 22H2) and
-  extends the frame over the client area, behind a transparent webview.
+  extends the frame over the client area, behind a transparent webview or
+  native UI.
   The material shows only in a window created without a redirection
   bitmap (`WS_EX_NOREDIRECTIONBITMAP`, which Windows neither adds nor
   removes later), whose opaque surface would cover it, so `SetVibrancy`
@@ -432,19 +462,160 @@ purego gives three primitives, used everywhere:
   goroutine), is made again, and every window's buttons draw again;
   buttons that could not draw retry on a timer of the application
   window, a second later and longer after each failure in a row. Without
-  DirectComposition, a window with a hidden title bar keeps its bitmap:
-  its buttons show, and the material does not.
+  DirectComposition, a window with a hidden title bar or native UI keeps
+  its bitmap: what it draws shows, and the material does not. Native UI
+  there draws on the GPU into a swap chain for composition, premultiplied
+  by its alpha (`d3d11.NewComposed`), on a DirectComposition device of the
+  renderer's own, and its frames drawn in memory show as the window
+  controls do. A renderer about to draw takes the surface's window over
+  from those (`Surface.Native`): a window has one DirectComposition target
+  at most. `ui.Context.Vibrancy` tells the view whether the material shows
+  (`platform.MaterialSurface`).
 - Message boxes are task dialogs (comctl32 v6, activated from shell32's
   manifest for executables without one); their structs are packed and laid
   out by hand. Notifications are notification-area balloons, which Windows
   10+ shows as toasts.
+
+### Browsers (`internal/web`)
+
+With `GOOS=js GOARCH=wasm`, `backend_js.go` picks `internal/web`, which
+shows windows of native UI (`WindowOptions.Surface`) on a page; windows of
+web pages, menus, trays, notifications, global shortcuts and file dialogs
+report `errUnsupported` or do nothing, as the browser has nothing to stand
+for them. Building for browsers adds nothing to desktop builds: the
+backend, `load_js.go` and `canvas_js.go` are `js` only, and the contract
+gained one field, `SurfaceNative.Canvas`.
+
+- **Size.** What only web pages use would make most of a build for
+  browsers, which servers send whole (Cloudflare's static files are at
+  most 25 MiB): the root's files for pages leave it out. `ipc.go`,
+  `channel.go`, `bridge.go` (what windows say to the bridge: its script,
+  messages, `Eval`), `protocol.go` (custom schemes, the frontend's, their
+  downloads), `typescript.go`, `updater.go` (and `relaunchNow`),
+  `single_instance.go`, `window_state.go` and `random.go` have twins
+  (`_js.go`) that keep their API and do nothing, or report that there is
+  no page, without the packages they need: net/http, net, crypto,
+  encoding/json, internal/tsgen with go/parser, internal/update. Only
+  `Protocol.Handle`, `HandleFunc` and `FileServer`, which take net/http's
+  types, are missing there. `Bind` binds nothing, so nothing calls
+  `reflect.Value.Method`, which would make the linker keep every exported
+  method of every type in an interface. `internal/platform` takes an
+  `http.Header` as its type, `map[string][]string`, so that ui does not
+  import net/http either (importing it alone adds 2.3 MB), and
+  `gpu.SourceSum`, for shaders compiled ahead of time, is not built for
+  browsers, with crypto/sha256. The root's tests and `internal/e2e` are
+  for desktops. What stays is mostly the runtime, ui and its packages,
+  and the image codecs (`ui.Image`): `website/docs-demo` comes to about
+  9.8 MB (2.6 MB with gzip).
+
+- **Threading.** Go's main goroutine, which calls `Run`, is the main
+  thread, told by its goroutine ID as `internal/fake` does. JavaScript
+  calls Go's functions (`js.FuncOf`) on goroutines of their own, while
+  the browser's event loop waits: `Backend.sync` hands the event to the
+  main goroutine through `tasks` and waits for it, so that a handler can
+  still call `preventDefault`. A callback that a call from Go to
+  JavaScript sets off (a `focus()` firing `focus`) runs on the calling
+  goroutine, the main one, and so runs at once. `Step`, for nested loops
+  (`await`, `PopupMenu`), takes tasks as `Run` does, so the browser's
+  events go on meanwhile; a nested loop must not start in a task, whose
+  callback holds the browser's event loop, but from `Dispatch`.
+- **Windows** are elements of class `mygo-window` filling the element with
+  the ID `mygo`, or else the page, each holding a canvas and a textarea.
+  The page sets their size; `Bounds` reads the element's. The surface's
+  size is the canvas's CSS size (DIPs) and `devicePixelRatio`, which a
+  `ResizeObserver` and the window's `resize` watch; its backing store is
+  set before each frame to the frame's size, `ceil(width × scale)` as
+  package ui computes it. `RequestFrame` asks `requestAnimationFrame`;
+  `Occluded` is `document.hidden`, where browsers give no frames, and
+  `visibilitychange` brings `SurfaceShown`.
+- **Drawing.** The canvas's WebGL 2 context (`gl.NewContext`: premultiplied
+  alpha, no depth, stencil or antialiasing) is current while a frame is
+  handled, as a GtkGLArea's is in its render signal, and
+  `SurfaceNative.Canvas` names it for `ui/gpu_js.go`. WebGL names its
+  objects by JavaScript objects and GL by numbers: `load_js.go` numbers
+  them (the number also a property of the object, which reads
+  `FRAMEBUFFER_BINDING` back) and implements the GL functions `gl.go`
+  calls on the current context, copying Go's bytes into one reused
+  `Uint8Array` for uploads, which the pixel store's unpacking (tracked
+  from `glPixelStorei`) sizes. With `WEBGL_blend_func_extended` the
+  shader writes the second color as on desktops; without it (one color
+  blended) subpixel glyphs could not draw, which browsers' text never
+  has. A lost context is kept (`preventDefault`) and, once restored,
+  renumbered (`Context.Renew`), which makes the renderer start over.
+  Where the browser has no WebGL 2, the canvas takes a 2D context and
+  `PresentPixels` puts the frames drawn in memory into an `ImageData`.
+- **Text** (`internal/text/canvas_js.go`) is the browser's: a 2D context
+  measures and draws it, so that it finds fonts, falls back and shapes as
+  for pages. Canvases give widths, not glyphs: the engine's glyphs are
+  grapheme clusters (go-text's segmenter), each ending where the text of
+  its word through it ends and starting its own width before, so that the
+  word's kerning moves the cluster it applies to; they are drawn alone,
+  with the font at the size they were measured at and the canvas scaled
+  (at the pixels' size the system's font may take another optical size,
+  as SF Pro Display for Text, whose glyphs the advances would not fit),
+  their coverage read back (`getImageData` of a `willReadFrequently`
+  context) and cropped to the ink. A line of text draws as the browser's
+  `fillText` draws it whole, pixel for pixel. Fonts are shaded: a glyph is
+  drawn in a gray of its text's shade, as Chrome's text, like AppKit's,
+  is bolder the lighter its color (dark text drawn with white glyphs looks
+  too bold), Thick in white; emoji take an unshaded twin of their font.
+  Runs of scripts whose letters join or reorder (Arabic, the scripts of
+  India, Thai, …) are one glyph each, shaped whole. Lines break at
+  UAX #14's opportunities, and go-text's bidi package gives runs' levels,
+  which the engine reorders (UAX #9's L2). Glyph IDs number the clusters'
+  texts. Glyphs blend in turn (`join` false), at quarter-pixel positions,
+  as Skia draws them. Chrome picks the optical size of the system font
+  inconsistently between pages and canvases, so text of native UI can be
+  wider or narrower than a page's in the same font.
+- **Input.** Pointer events (captured on press) are the pointer, with
+  clicks counted from presses close in time and place, buttons 3 and 4
+  the back and forward keys; `wheel` events scroll, lines and pages
+  turned into DIPs, notches of 120 not `Precise`. The textarea, out of
+  sight at the caret (`SetTextInput`), has the keyboard: `keydown` and
+  `keyup` are keys, by what they type (`key`) and else by where they are
+  (`code`); `beforeinput` brings typed text, which it cancels so that the
+  textarea stays empty; composition events are the input method's. The
+  browser keeps its defaults for keys that type, its own keys (F5, F11,
+  F12) and those copying and pasting: the content copies on the key and
+  the `copy` event that follows carries its text (the backend's
+  clipboard) to the system's, while the clipboard's text comes with
+  `paste`, which then sends the paste command. On a Mac, Command is
+  `ModCtrl` and Control `ModSuper`, as package ui takes browsers for
+  another system than macOS.
+- **Files dropped** (`files.go`): `dragover` on the canvas, with files,
+  is `FileDragOver`, whose answer is the `dropEffect`, and the browser's
+  default (opening the file, leaving the app) is always prevented; a
+  `drop` reads the files' bytes (`arrayBuffer`, settled together; folders
+  have none) before `FileDrop` gives their paths, `/mygo-drop/<n>/<name>`.
+  Go's syscall package calls the `fs` object of `wasm_exec.js`, whose
+  functions fail in browsers: the backend wraps `open`, `read`, `fstat`,
+  `close`, `stat`, `lstat` and `readdir` to answer for those paths,
+  synchronously, as an app reads a drop in its handler, while the browser
+  waits on the callback that sent the drop, and passes other paths on.
+- **Context menus** (`PopupMenu`) are HTML, styled as macOS's, in a nested
+  loop until an item is chosen, a press lands elsewhere, Escape is pressed
+  or the page loses focus; the choice goes to `MenuItemClicked`.
+- **Themes**: `IsDark` and `Preferences` read `matchMedia`, whose changes
+  call `ThemeChanged`; the root's `data-mygo-theme` (watched by a
+  `MutationObserver`) chooses the appearance over the media's. `ShowMessageBox` uses `alert` and `confirm`.
+- **History** (`ui/router_js.go`): the first `ui.Router` a window (not a
+  `Tester`) shows claims the tab's history, through hooks the router calls
+  (`browserHistory`, nil elsewhere). Its location goes in the URL's
+  fragment and the number of its entry (`Router.base + at`, `base`
+  counting the entries dropped past `maxHistory`) in `history.state`:
+  `Push` is `pushState`, `Replace` `replaceState`, `Go` `history.go`,
+  whose `popstate` finds the router there already. A `popstate` of the
+  browser's own buttons goes to the entry of its number; one just before
+  the router's first or after its last, as after a reload (which takes
+  the number of the browser's entry for the router's), becomes the
+  router's; a fragment typed in, without a state, is pushed.
 
 ## IPC
 
 ### The page runtime (`packages/bridge` → `internal/bridge/bridge.js`)
 
 `packages/bridge/src/bridge.ts` is bundled by Bun into an IIFE
-(`bun run build`) and committed, so building an app never needs Bun. The core wraps it with the
+and committed, so building an app never needs Bun. The core wraps it with the
 window's configuration (`bridge.Script`) and every backend injects it at
 document start into the main frame. It installs:
 
@@ -497,10 +668,16 @@ Apps reach the injected runtime through the `mygo-runtime` npm package:
 MyGo window) and the public types (`Runtime`, `WindowControls`, `Platform`),
 which the bridge shares. It holds no transport of its own: it delegates to
 `window.mygo`, so the injected script stays the single implementation of the
-protocol. Its `dist/` is not committed: `bun run build` builds it, as CI
-and releases do, and must have run in a checkout that `mygo init --mygo
-<checkout>` depends on with `file:`. The template depends on `^<version>`
-from npm, released in step with the Go module.
+protocol. The template depends on `^<version>` from npm, released in step
+with the Go module.
+
+<!-- repository-only:start -->
+
+Its `dist/` is not committed. Run `bun run build` before using a checkout
+with `mygo init --mygo <checkout>` and its `file:` dependency. CI and releases
+build the package too.
+
+<!-- repository-only:end -->
 
 ### The `mygo-cli` package (`packages/cli`)
 
@@ -513,11 +690,12 @@ package managers install only the matching one, and its `bin/mygo.js`
 resolves that package and replaces itself with the binary
 (`process.execve` in Node.js 23.11 and later and in Bun; elsewhere it spawns
 the binary, waits and passes its exit status on). `MYGO_CLI_BINARY` points
-it at another build. In a checkout of this repository, where the platform
-packages hold no binary, it builds `cmd/mygo` from source instead: the
-workspace examples run it that way.
+it at another build.
 
 <!-- repository-only:start -->
+
+In this repository's checkout, platform packages hold no binary, so the
+workspace examples build `cmd/mygo` from source.
 
 `bun run --cwd packages/cli binaries [platform...]` cross-compiles the
 binaries (ignored by git) and writes the manifests with the version of
@@ -724,8 +902,7 @@ build` like mygo-runtime and released with the same version.
   tagged cells and confines database files to the Go-configured directory.
   Connections belong to their page and close on navigation or app quit.
   `mygo-plugin.json` names the six native-library assets, which the CLI
-  bundles like libghostty-vt; `go generate ./plugins/sqlite` writes them and
-  their checksums. Go and native UI apps can also open connections directly.
+  bundles like libghostty-vt, with checksums for the library assets. Go and native UI apps can also open connections directly.
 
 - **terminal** is a terminal for native UI: a `Terminal` runs a program in
   a pseudo-terminal and emulates it with libghostty-vt, Ghostty's terminal
@@ -775,8 +952,7 @@ build` like mygo-runtime and released with the same version.
     bar.
   - *Themes.* `ghostty_themes.go` holds the themes the Ghostty it binds
     ships (iTerm2-Color-Schemes' archive that its `build.zig.zon` names),
-    as 22 colors each, which `go generate` writes too
-    (`go run ./internal/libbuild -themes` writes only them, without Zig).
+    as 22 colors each in the generated theme data.
     `GhosttyTheme` looks for a theme file of the user's first, in
     Ghostty's themes directory, as Ghostty does.
   - *Input* comes as it happens (`ui.Element.HandleInput`): keys are
@@ -789,9 +965,8 @@ build` like mygo-runtime and released with the same version.
     gesture of libghostty-vt turns presses and drags into selections, with
     the clicks it counts itself.
   - *Shipping the library.* `mygo-plugin.json` names its build for each
-    platform, published as assets of a release of this repository, with
-    their SHA-256 (`go generate ./plugins/terminal` builds them with Zig
-    from Ghostty's sources and writes it). The CLI puts them into apps
+    platform, published as release assets with their SHA-256 checksums.
+    The CLI puts them into apps
     (see the CLI's resources); other programs download theirs into the
     user's cache once, which packaged apps never do.
 - **glass** is Liquid Glass for native UI, as macOS 26 and later draw it:
@@ -830,8 +1005,7 @@ build` like mygo-runtime and released with the same version.
   level; the soft style is a gradient of the background, as macOS 27's
   replays its window's background under a mask, with no blur (measured
   from SwiftUI's `safeAreaBar` over test patterns, its layers dumped).
-  `go generate ./plugins/glass`
-  compiles both effects' shaders ahead of time on macOS
+  Both effects' shaders are compiled ahead of time on macOS
   (`shaders_darwin.go`) and on Windows (`shaders_windows.go`), with
   `internal/gen`.
 
@@ -1035,6 +1209,42 @@ as in Tauri:
   pages are secure contexts with a real origin on every platform, which
   these APIs need. `macos.infoPlist` adds keys such as the camera and
   microphone usage descriptions macOS requires.
+- Flyouts (`flyout.go`, `internal/platform/flyout.go`): `NewFlyout`
+  creates a window with `platform.WindowOptions.Flyout`, which backends
+  make a borderless, transparent popup owned by its parent, and place
+  with `Window.PlaceFlyout` against an anchor in the parent's content
+  area. `Flyout.Place` resolves the placement in the work area of a
+  display as GDK does for `gdk_window_move_to_rect` (`maybe_flip_position`,
+  then slide, then resize, per axis), and `WorkAreaFor` picks the display
+  as GDK's `get_monitor_for_rect`; macOS, X11 and Windows (in physical
+  pixels) use it, Wayland hands the anchor to the compositor's
+  positioner. The core places a window's flyouts again as it moves or
+  resizes (owned windows on Windows and X11 popups do not follow), and
+  as `SetAnchor` and `SetSize` change them. A focusable flyout closes
+  through `WindowHandler.ShouldClose` when it loses the keyboard: as its
+  panel resigns key (macOS), on a press outside it or a broken grab, or
+  as the compositor dismisses the popup (GTK, as `GtkMenu`), and as
+  another window is activated (Windows), whose activating click its
+  owner eats (`MA_ACTIVATEANDEAT`), as menus' and WinUI's flyouts'. An
+  Escape the content leaves closes a flyout too: native UI reports one
+  no shortcut took (`routeKeys`, `surface.Conn.Escape`), and the bridge
+  one no handler of the page cancelled (an `escape` message). `Flyout.Popover` shows one in an
+  `NSPopover` (`internal/darwin/popover.go`), whose window AppKit makes
+  as it shows, and whose transient behavior asks `popoverShouldClose:`.
+  `Flyout.Tray` anchors one to a tray icon's `Bounds` instead, without a
+  parent: the panel at `NSPopUpMenuWindowLevel` or an `NSPopover` shown
+  from the status item's button (macOS), a topmost unowned popup
+  (Windows), and on Linux, whose AppIndicator tells no bounds, an
+  undecorated utility toplevel in the middle of the work area, which a
+  focusable one closes as it loses the keyboard. A press on the icon
+  does not dismiss its flyout (`tray.pressed` in `popoverShouldClose:`
+  and on resigning key, the cursor over `Shell_NotifyIconGetRect` on
+  Windows), so its click toggles it. A global monitor of mouse downs
+  closes macOS's focusable panels on clicks outside the app, which a
+  panel taking the keyboard of an app that was not activated never
+  hears as the key window changing. The design follows GPUI's
+  `WindowKind::AnchoredPopup` and winit's `WindowType::Popup`, which
+  model xdg_positioner too.
 - `window.open()` and `target=_blank` go through `SetWindowOpenHandler`. By
   default http(s) URLs open in the default browser. Allowing one creates a
   window around the configuration or related view WebKit provides, with its
@@ -1094,6 +1304,36 @@ format mappings.
 
 ## Native UI (`ui`)
 
+The public API keeps one stable `*Context` per window. Child builders share
+it and temporarily change its parent. `Element` is a 16-byte checked value:
+a direct owner record, arena slot and 32-bit generation. The owner detaches
+from the engine on close and retires before generation wrap. Old elements
+cannot alias recycled nodes. Development builds and `Tester` diagnose stale
+use; production methods return empty results or ignore it. `Handle` stores
+persistent control identity separately for each window. Focus queries read
+identity without depending on construction order; focus requests wait for a
+hidden control. `Services` offers persistent clipboard, URL and redraw access.
+
+Constructors build and style controls eagerly. `Context.Key` supplies an ID
+before state initialization. `Changed` and `Submitted` apply pending input
+to controls built so far, once per pass, before returning the response. This
+lets polling commit a local bound value immediately. Input options must be
+configured before response queries. Public click and shortcut queries also
+apply pending bound input before returning, so inline actions see the latest
+edits. `ComboboxParts.Chosen` applies input and reports a choice in the same
+pass; it is not carried into a later rebuild. Private widget queries do not
+finalize input during construction, before fluent configuration. Remaining
+input applies after construction. `OnChange` and `OnSubmit` run after construction and bound
+input, before rebuilding. Notices are cleared before another pass so an
+edit cannot be reported again on a fresh local binding. Callback actions
+consume input once and rebuild before paint.
+The private render tree uses `node` and `context`; `internal/uigen` generates
+the checked public facade. `FocusBind` binds desired focus to app data; `FocusedValue` reads actual focus independently of a hidden
+control's pending request.
+
+See the [migration guide](ui/migration.md) for the breaking element API,
+`mygo migrate-ui`, and the Go type-aware lifetime checks in `mygo vet`.
+
 A window with `WindowOptions.Content` shows a user interface MyGo draws
 itself instead of a web page. The layers stay as everywhere else: the
 toolkit (`ui`) is plain Go above the platform contract, a backend only
@@ -1102,9 +1342,9 @@ either.
 
 ```
  view (Go) ──► ui: build, layout, paint ──► internal/scene ──► internal/gpu: d3d11 | metal | gl, or internal/raster
-                 ▲       └─ internal/text: DirectWrite | Core Text | Pango, glyph and mask atlases
+                 ▲       └─ internal/text: DirectWrite | Core Text | Pango | canvas, glyph and mask atlases
                  │
- internal/surface.Conn ◄── content.go (package mygo) ◄── platform.Surface: darwin | linux | windows | fake
+ internal/surface.Conn ◄── content.go (package mygo) ◄── platform.Surface: darwin | linux | windows | web | fake
 ```
 
 - **The surface.** With `platform.WindowOptions.Surface`, a backend creates
@@ -1227,14 +1467,25 @@ either.
   nothing.
 - **Frames.** The engine (`ui/runtime.go`) calls the view to build a frame,
   again (up to three times) when a handler changed the state while it built,
-  so the frame shows the outcome; lays it out with flexbox (`layout.go`) or
+  so the frame shows the outcome. A window that closes during a frame (a
+  close button's click; backends report `Closed` at once) keeps its engine
+  until the frame ends: the rest of the view builds with a working
+  `Context`, no further callback runs, nothing is laid out or painted, and
+  the engine closes as the frame ends. Observing `Pressed` when a pointer press
+  begins also rebuilds before painting, so selection made on press and its
+  focus colors appear together; holding the pointer asks for no further
+  build passes. The engine lays it out with flexbox (`layout.go`) or
   as a grid (`grid.go`, CSS grid's placement and track sizing for fixed,
   fractional and content-sized tracks); commits the boxes to the elements'
   states with the hit list in paint order, the focus order and the labels;
   paints a `scene.Scene`; and presents it. Input between frames goes to the
   states of the last frame's elements. An element's identity hashes its
   parent's with its position or `Key`, so focus, scroll offsets, editors and
-  animations survive rebuilding. Scroll offsets move in the layout too
+  animations survive rebuilding. `Context` is stable for the window; `Element` values expire between build
+  passes and validate their owner, slot and generation before accessing storage. `ListState` resolves
+  its focus owner only for the current context, frame and pass, exposing
+  focus and shortcuts without retaining an element in app state. Scroll
+  offsets move in the layout too
   (`ui/scroll.go`): elements that asked to `ScrollIntoView`, and the focus,
   come into view before the boxes are placed, and placing keeps each offset
   within its content; a `ScrollState` mirrors an offset both ways, and a
@@ -1246,14 +1497,18 @@ either.
   paints the elements of the last frame again at its own time
   (`repaintFrame`), without building or laying out; elements out of view
   are not painted, so they ask for none. Such a frame is asked for with
-  `redraw` set, which anything else asking for a frame clears: every event
-  of the surface, `requestFrame`, `Conn.Changed` (`Window.Update`,
-  `Invalidate`, and `After`'s timer through them) and a change of the
-  appearance. A frame of another size, or after the text system forgot
-  its layouts (`text.System.Generation`, as it lets go of fonts the
-  elements' layouts hold), builds anew all the same. The timers the last
-  frame built armed stay; `Painter.After` has a timer of its own, which
-  posts to the main thread.
+  `redraw` set, which every event of the surface clears, so that the frame
+  builds anew in case the event changed what the view shows; anything
+  asking for a frame clears it too, and the frame `Painter.After` has due
+  with it, which the frame asked for replaces: `requestFrame`,
+  `Conn.Changed` (`Window.Update`, `Invalidate`, and `After`'s timer
+  through them) and a change of the appearance. An event that asks for no
+  frame, as the pointer moving over elements that do not look at it,
+  leaves that frame due. A frame of another size, or after the text
+  system forgot its layouts (`text.System.Generation`, as it lets go of
+  fonts the elements' layouts hold), builds anew all the same. The timers
+  the last frame built armed stay; `Painter.After` has a timer of its
+  own, which posts to the main thread.
   While nothing of the window shows (`platform.OccludableSurface`: a macOS
   window hidden, minimized or covered by other windows, whose display link
   still ticks, at the display's rate for half a minute, then at about 40
@@ -1693,11 +1948,108 @@ either.
   the other way along the target, where that leaves the window less, and
   moves along the target into the window (`alongTarget`). Popovers have no
   backdrop: the engine notes what each press went down on (`downs`, for a
-  pass), and `PressedOutside` walks from there through parents, and from a
-  popover to its anchor, which keeps presses in popovers of elements inside
-  the panel, and on its anchor, inside it, as the press goes on to what is
-  under it. A select's popup keeps a backdrop taking the presses outside,
+  pass), and `PressedOutside` walks from the last through parents, and from
+  a popover to its anchor, which keeps presses in popovers of elements
+  inside the panel, and on its anchor, inside it, as the press goes on to
+  what is under it; a press on the anchor after one elsewhere in the same
+  pass, as on a web view's page, leaves open the popover it opens. A select's popup keeps a backdrop taking the presses outside,
   as the system's pop-up menus do.
+- **Web views** (`webview.go`, `ui/webview.go`, `webview.go` of each
+  backend). `Window.NewWebView` makes a web view of a window showing
+  `Content`, whose page lives in a `Window` of its own that no list holds,
+  with `host` set: calls, channels, events, `Eval`, custom schemes,
+  downloads and permissions go through the code of windows' pages
+  unchanged, `CallerWindow` returns the host, `CallerPage` the page, and
+  the bridge has the host's id, so the window controls of the page act on
+  it. Its native side (`webViewNative`) takes page methods from the
+  backend's `platform.WebView` and window methods from the host's, which
+  drag regions use. `ui.WebView` places it: committing a frame notes where
+  each web view's element shows (`noteWebView`: its content box on whole
+  pixels, clipped as its hits are), and painting it makes a hole
+  (`OpHole`) through what the window painted, rounded as the border's
+  inner edge and cut by the clips around it, so that what paints after
+  the element paints over the page. The native web view is under the
+  surface, which shows it through its transparent frames; what shows over
+  it blends with it as over any pixels. After presenting a frame, the
+  engine gives the surface each web view's frame and clip and the boxes
+  of the hits after its own within its clip (`Covers`): the pointer is the
+  page's where it shows and nothing painted over it takes the pointer
+  (`WebViewPlacement.At`), as a dialog's backdrop does over all of it. A
+  press there goes to the page and comes to the content as `WebViewPress`,
+  which notes it for `PressedOutside` and takes the focus from the
+  content; the engine sets no cursor while the pointer is over a web view
+  (`cursorUnknown`), whose page sets it. Web views the frame does not build
+  hide and keep their pages. Glyphs over a hole are not on an opaque
+  background (`Painter.holes`), so that subpixel ones do not color the
+  page. Below full opacity a hole takes only that much of what is under
+  it away (`OpHole`'s `Opacity`), so the page blends over it. The element
+  is a Tab stop: focusing it gives the page the keyboard
+  (`WebView.TabInto`, from its end going back), and Tab past the page's
+  ends comes back as `WebViewTabOut`, from which the focus moves on. The
+  access tree has a node for each page, inside its element
+  (`AccessNode.WebView`), which the backends fill with the page's own
+  accessibility, as SwiftUI's `WebView` is in place. Backends:
+  - macOS: the WKWebView is in a flipped clip view (`MyGoClipView`, its
+    layer masking to its bounds) placed at the clip, under the surface in
+    the content view, in paint order; the Metal layer is not opaque, and
+    frames drawn in memory have their alpha. The surface's `hitTest:`
+    returns nil where a web view takes the pointer, so AppKit finds the
+    page under it. A web view's tracking areas get the mouse's moves
+    wherever its frame is: `MyGoWebView` drops `mouseMoved:`,
+    `mouseEntered:` and `cursorUpdate:` where the content painted over it,
+    and as the pointer goes there from the page sends WebKit an exit
+    outside the view, which WebKit takes as a move there, unhovering the
+    page; WebKit sets its cursor only where `hitTest:` finds the web view,
+    and the surface sets none over a page. `TabInto` puts the web view
+    after (before) the surface in the window's key view loop and selects
+    it, so WebKit focuses the page's first (last) element; as Tab leaves
+    the page WebKit selects the next key view, which `MyGoWindow` turns
+    into `WebViewTabOut`. The page's node lists the WKWebView, whose
+    `accessibilityParent` is that node; the clip view lists none.
+  - Linux: the first web view puts the surface's area in a `GtkOverlay`,
+    over a `GtkLayout` holding the WebKitWebViews (which, unlike a
+    `GtkFixed`, asks for no size), as an overlay, which GTK realizes again
+    with a new GL context (the GL renderer makes its objects again). The
+    GtkGLArea has an alpha channel from then on, and frames drawn in
+    memory paint over the web views (`CAIRO_OPERATOR_OVER`). An input
+    shape on the overlay's window of the area
+    (`gdk_window_input_shape_combine_region`) lets the pointer through to
+    the pages, whose windows then set the cursor; a web view's own
+    `button-press-event` tells the content. WebKitGTK focuses no element
+    as a view takes the focus, so `TabInto` blurs the page's and passes the
+    Tab being handled on to the view (`gtk_widget_event`); WebKit moves the
+    focus out as Tab leaves the page through GTK's `focus` signal, which
+    the view's handler turns into `WebViewTabOut`. The page's node lists
+    the view's accessible, an `AtkSocket` the web process's tree is
+    embedded in; the overlay is a subclass whose accessible lists the
+    surface's alone.
+  - Windows: WebView2 in visual hosting, a composition controller
+    (`ICoreWebView2Environment3`) whose visual is in a DirectComposition
+    target of the surface's window that is not topmost (a window has one
+    of each), on a device of its own without a rendering device
+    (`DCompositionCreateDevice2`): the surface's frames, in the topmost
+    target, are over it. The surface composes its frames from its first
+    web view on, as in a window without a redirection bitmap: it sends
+    `SurfaceRenew`, and the content makes its renderer again for a swap
+    chain for composition, or shows frames drawn in memory through the
+    compositor; GDI would draw under the web views. Each web view's
+    visual is in one clipped to its clip, the page at its bounds in the
+    surface's pixels. The surface gets the mouse everywhere and sends it on
+    (`SendMouseInput`) where a web view takes the pointer, or to the one a
+    press went to until the buttons are let go (with the capture), with a
+    leave as the pointer goes; it sets the cursor the page asks for
+    (`CursorChanged`), and a press moves the focus into the page.
+    `TabInto` is `MoveFocus` (next or previous), and `MoveFocusRequested`
+    becomes `WebViewTabOut`. The surface's drop target sends drags over a
+    page to its composition controller (`ICoreWebView2CompositionController3`'s
+    `DragEnter` and the others). For UI Automation the root also answers
+    `IRawElementProviderHwndOverride`: for the window WebView2 shows a page
+    with, it returns the page's node, which answers with WebView2's
+    provider of the page (`get_AutomationProvider`), as WinUI 3 does. That
+    provider has no children: the page's elements are under a top-level
+    window of WebView2's (`Chrome_WidgetWin_1`), which
+    `GetAutomationProviderForWindow` does not map to it, so UI Automation
+    finds them there (seen with a runtime of October 2026).
 - **Context menus** (`ui/menu.go`) open in two frames. A right-click or the
   menu key marks the element, from the states of the last frame, and the
   next frame runs its `ContextMenu` function to collect a `platform.Menu`;
@@ -1710,11 +2062,14 @@ either.
   rectangles with borders of a width per side, solid or dashed, filled
   with a color, a linear gradient mixed in sRGB or Oklab, or stripes;
   shadows (blurred rounded rectangles, cut by the box casting them, as
-  CSS's box-shadow is); runs of glyphs, whose masks may take a gradient
-  (paths drawn with one); images, in color or gray; effects
-  (`OpEffect`); and pushed and popped clips. Renderers draw the whole
-  scene each frame and retain only textures. Wavy underlines are stroked
-  paths.
+  CSS's box-shadow is, or inner ones, inside the box where the hole they
+  leave, blurred, does not cover it, as box-shadow: inset is); runs of
+  glyphs, whose masks may take a gradient (paths drawn with one); images,
+  in color or gray; effects (`OpEffect`); holes (`OpHole`), rounded
+  rectangles made transparent, what was painted there gone, for web
+  views; and pushed and popped clips.
+  Renderers draw the whole scene each frame and retain only textures.
+  Wavy underlines are stroked paths.
 - **Effects** (`scene.Effect`) are drawings that packages outside the
   renderers define, as the official plugins do (the glass plugin's Liquid
   Glass): a fragment shader for each GPU renderer, in Metal Shading
@@ -1769,7 +2124,8 @@ either.
   (`IDWriteTextLayout`, with an `IDWriteTextRenderer` implemented in Go
   collecting its glyph runs), Core Text on macOS (`CTTypesetter`, with
   `NSFont` for the system font's weights) and Pango on Linux (with
-  fontconfig and HarfBuzz underneath, as in GTK). They find the fonts, fall
+  fontconfig and HarfBuzz underneath, as in GTK); in browsers, a canvas's
+  2D context (`canvas_js.go`, see [Browsers](#browsers-internalweb)). They find the fonts, fall
   back to other fonts for what one lacks, shape, run the bidirectional
   algorithm and break lines; font files stay memory mapped and shared with
   every other process. The package assembles their lines into layouts, with
@@ -1799,14 +2155,19 @@ either.
     `text.Shade` of the text's color. `text.Thick`, for text a
     `ui.Font` thickens (the terminal's `Font.Thicken`, as Ghostty's
     font-thicken), smooths at the strongest step whatever the color and
-    the user's setting; other engines draw it as other text.
+    the user's setting, and `text.Flat`, for text a `ui.Font` draws
+    `Antialiased` (as browsers draw `-webkit-font-smoothing:
+    antialiased`), does not smooth; other engines draw both as other
+    text.
   - *Windows.* Glyphs take the rendering mode and grid fitting DirectWrite
     recommends for their font and size (`IDWriteFontFace3`'s, which from
     about 1.9 pixels a DIP downsamples natural symmetric rendering, as
     Direct2D draws), ClearType where the system smooths
     fonts with it (`SPI_GETFONTSMOOTHINGTYPE`, with the pixel geometry and
     ClearType level of the system's rendering parameters) and the glyph is
-    on an opaque background, and are aliased where the system does not
+    on an opaque background (the root's, or that of an element around it
+    holding all of it that shows, as a pane beside a sidebar over a
+    material), and are aliased where the system does not
     smooth fonts. Renderers blend them as Direct2D does, with the gamma
     and enhanced contrasts of the system's rendering parameters
     (`scene.TextParams`, Windows Terminal's reproduction of Direct2D's
@@ -1914,17 +2275,19 @@ either.
   renderers blend with it (dual-source blending): it is the color's alpha
   but for subpixel glyphs, whose subpixels cover each channel by its own.
   OpenGL ES without `EXT_blend_func_extended` blends the mean of their
-  subpixels instead. Every GPU renderer draws these instances:
+  subpixels instead. A hole is an opaque fill in a batch of its own
+  (`Batch.Hole`), blended with a source factor of zero: the destination
+  keeps one minus its coverage, as the CPU renderer's `erase` does. Every GPU renderer draws these instances:
   - `internal/gpu/d3d11` with a shader compiled to DXBC ahead of time
-    (`go generate ./internal/gpu/d3d11` on Windows, with the system's
-    `d3dcompiler_47.dll`), so apps carry no shader compiler. The
+    (on Windows, with the system's `d3dcompiler_47.dll`), so apps carry no shader compiler. The
     generated file records the SHA-256 of the source it came from, line
     endings aside (`gpu.SourceSum`), as Metal's does: bytecode older than
     `shader.hlsl` falls back to compiling that with the same DLL, which
     Windows has, and its test fails. Both compilation paths enable IEEE
     strictness with optimization, avoiding a native compiler optimizer crash
     on transformed coverage sampling. It draws into a flip-model swap
-    chain on the surface's window, with WARP when no hardware device
+    chain on the surface's window, or, over a material, one for
+    DirectComposition shown on it, with WARP when no hardware device
     works. At most one frame waits ahead of the screen, not DXGI's three,
     so frames that follow each other, as when scrolling or animating,
     show their input two frames sooner. A frame of a new size is
@@ -1938,8 +2301,8 @@ either.
     (`SetSourceSize`), until a frame a second after the last change,
     which a timer asks for, gives it two of the window's size again;
   - `internal/gpu/metal` with a shader in Metal Shading Language
-    compiled into a Metal library ahead of time (`go generate
-    ./internal/gpu/metal` on macOS, with Xcode's `metal` tools), which
+    compiled into a Metal library ahead of time (on macOS, with
+    Xcode's `metal` tools), which
     spares a first launch the 100 to 150 ms Metal takes to compile the
     source until it has cached it; a library older than `shader.metal`
     falls back to that, and its test fails. It draws into a CAMetalLayer
@@ -1986,7 +2349,10 @@ either.
     attributes, pointed at each batch's first since OpenGL ES 3.0 has no
     base instance. The area's `create-context` asks GDK for OpenGL 3.3,
     else OpenGL ES 3.0, as GPUs with OpenGL ES alone have, and so does
-    the probe below (`glContext`).
+    the probe below (`glContext`). In browsers the same renderer draws
+    with WebGL 2, which is OpenGL ES 3.0 (see
+    [Browsers](#browsers-internalweb)): only where its functions come from
+    differs, `load_linux.go` or `load_js.go`.
 
   Linux draws with OpenGL only where it runs on a GPU. A GL context loads
   Mesa for good: some 50 MB of libraries (LLVM, which distributions' Mesa
@@ -2097,6 +2463,15 @@ renderer's (`gputest.Compare`).
 
 ## CLI (`cmd/mygo`)
 
+- Browsers (`web.go`): `build -platform web` (or `js/wasm`) compiles the
+  app with `GOOS=js GOARCH=wasm` and the production flags into `<out>/web`,
+  with a page of its own (`webPage`: a spinner while the WebAssembly loads)
+  and the `wasm_exec.js` of the Go that compiled it, which must match.
+  `dev -web` serves the page, the loader and the last build that compiled
+  from memory (`webDev`), rebuilds on the watcher's changes as the desktop
+  loop does, and tells pages through server-sent events (`/__mygo/events`):
+  `reload` after a build, `build-error` with the compiler's output, which
+  the page shows over the app until a build compiles.
 - `init` renders `cmd/mygo/template`: a Go module and a TypeScript frontend
   built with Vite, side by side at the project root like the examples, draws
   a default icon at `resources/icon.png`, fetches modules, installs the
@@ -2117,12 +2492,18 @@ renderer's (`gputest.Compare`).
   -tool`, or a `tool` line beside the `replace` of a checkout), for
   `go tool mygo dev` and `build`; no Bun. Without a frontend in the
   configuration, `bindings` stays empty and the CLI writes no client.
+- Both templates install the agent skills embedded under
+  `cmd/mygo/template/shared/.agents/skills`. `install-skills [dir]` refreshes
+  the same bundled files in an existing directory, without reading project
+  configuration or replacing unrelated skills and extra custom files.
 - The configuration is `mygo.config.ts`, or `mygo.json` (`config.go`,
   `config_ts.go`). For the former, Bun, else Node.js 22.6 or later (with
   `--experimental-strip-types` before 22.18 and 23.6), runs a loader that
   imports it, awaits its default export or calls it with `{ command }`, and
   writes JSON to a temporary file; either way the JSON goes through the same
-  checks. Errors name the file in use. `defineConfig` and the types of the
+  checks. The loader goes to the runtime's standard input, never its
+  command line: on Windows the runtime may be a batch file (npm's
+  `bun.cmd`), and cmd.exe cuts the command line at a line break. Errors name the file in use. `defineConfig` and the types of the
   configuration come from `packages/cli/index.d.ts`; `TestConfigTypes`
   keeps its interfaces in step with the `Config` struct.
 - `generate` builds the app for the host and runs it in generate mode
@@ -2136,11 +2517,11 @@ renderer's (`gputest.Compare`).
   bundle-only features (notifications, URL schemes) work and its data stays
   apart from the production app's. Builds are assembled in a staging
   directory and renamed into place, so the running build keeps its files.
-  - *Ready handshake.* The CLI listens on a Unix socket and passes it in
-    `MYGO_READY_SOCKET`; the core connects once the first window is ready to
-    show or failed to load, right after launch when there is no window, and
-    at most 5 s after launch otherwise (`dev.go`). Nothing happens in
-    production builds.
+  - Builds run with `MYGO_DEV=1`, which the core takes out of its
+    environment (`dev.go`): `App.Relaunch` then exits with code 75, which
+    has `mygo dev` start the same build again. Production builds ignore it.
+    A build counts as started once its process is: one that crashes on
+    start is reported as it exits.
   - *Reload.* A change (polling every 250 ms, debounced) rebuilds;
     when the executable, Info.plist and icon are unchanged nothing restarts.
     Otherwise the running build is sent SIGTERM (quit sequence), then
@@ -2149,7 +2530,7 @@ renderer's (`gputest.Compare`).
     the app's files are free. Only the app gets the SIGTERM, which lets it
     end the processes it started; those left after it exits are killed. A
     build that fails to compile leaves the old one running; one that fails
-    to start or get ready within 20 s leaves none until the next change.
+    to start leaves none until the next change.
   - *Watching.* Exactly what the build reads, from `go list -deps` after
     every build: the directories of the compiled packages outside GOROOT and
     the module cache (so local `replace` modules too), embedded files,
@@ -2161,6 +2542,30 @@ renderer's (`gputest.Compare`).
     directories sharing them for deletion (`openDir`), which `os.Open`
     does not, so that deleting or renaming one it lists does not fail.
   - Quitting the app ends `mygo dev`; a crash waits for the next change.
+    Ctrl+C stops the app as a change does; a second one kills it and the
+    dev server at once. The watcher reports the paths that changed, which
+    the rebuild names. Lines typed on the terminal are shortcuts (`r`
+    restarts even an unchanged build, `c`, `q`, `h`); on Unix, mygo
+    ignores SIGTTIN, so that reading them in the background fails rather
+    than stopping it.
+- *Output* (`console.go`), on standard error: a line per step of a
+  command. On a terminal (Windows: a console that takes VT sequences once
+  `enableVT` asks), the step in progress has a spinner, redrawn in place
+  at 12 fps and cut to the width (`termWidth`, autowrap off besides), with
+  its elapsed time and what it does: `goBuild` runs `go build -v` and
+  shows the import paths it prints, and modules it downloads, keeping
+  the other lines, the compiler's errors, for its error; downloads show
+  their bytes. Steps nest (signing inside a build). What the programs the
+  CLI runs print goes through `labeled` writers, which erase the spinner's
+  line, write whole lines with a label (`web │`, `app │`) and draw it
+  again; the app writes to an `os.Pipe`, not a writer of `exec.Cmd`,
+  whose `Wait` would wait for the web view's processes holding it, and
+  commands with writers get a `WaitDelay`. Without a terminal, each step
+  has a start line and an end line, without colors unless `FORCE_COLOR`
+  (`NO_COLOR` turns them off anyway). `dev` and `build` open with a
+  banner whose five exclamation marks are those of MyGO!!!!!, in its
+  members' colors, which light up one after the other on a terminal
+  (redrawn two lines up with the cursor saved, until a line moves it).
 - `build` generates the client, runs `buildCommand`, then compiles each
   target with `-trimpath -ldflags "-s -w -X …production=1"` (`-H=windowsgui`
   on Windows) and `-tags mygo_noinspector`, which leaves the inspector of
@@ -2278,11 +2683,15 @@ renderer's (`gputest.Compare`).
   manifest, read with sed from the indented JSON `mygo build` writes.
   `--uninstall` removes only what points into its install, including the
   URL handler entry the app registers.
-- On a macOS host, macOS targets also get "<name> <version>.dmg"
-  (`dmg.go`): `hdiutil` creates a writable HFS+ image from the app, the CLI
-  adds the `/Applications` link, the volume icon and a `.DS_Store` written in
-  pure Go (`dsstore.go`, byte-identical to dmgbuild's `ds_store` package) that
-  lays out the Finder window, then `hdiutil convert` compresses it with LZMA.
+- On a macOS host, macOS targets also get "<name> <version> <arch>.dmg",
+  or "<name> <version>.dmg" for darwin/universal
+  (`dmg.go`): the CLI puts a copy of the app (`ditto --noclone`, since a
+  clone of a sparse file takes fewer blocks than its copy on HFS+ will),
+  the `/Applications` link, the volume icon and a `.DS_Store` written in
+  pure Go (`dsstore.go`, byte-identical to dmgbuild's `ds_store` package)
+  that lays out the Finder window in a folder, `hdiutil` creates a writable
+  HFS+ image of it, as large as its files need, the CLI sets the volume's
+  Finder flags, then `hdiutil convert` compresses it with LZMA.
   No AppleScript or Finder automation is involved, so it works headless and
   in CI. The image is signed with a real identity and, with `macos.notarize`,
   notarized with `notarytool` and stapled.
@@ -2301,15 +2710,24 @@ profile).
 
 ## Testing
 
+Regenerate checked UI wrappers with `go generate ./ui`. Native library and
+shader generation commands are listed in [AGENTS.md](../AGENTS.md).
+
 | suite | command | covers |
 |---|---|---|
 | core | `go test .` | lifecycle, quit, IPC, channels, events, Eval, protocol, frontend URLs and serving, menus, trust, single instance, dev ready signal (fake backend); `go test -run '^$' -bench .` measures the Go side of IPC and custom schemes |
 | generator | `go test ./internal/tsgen` | TS output, json/v2 rules, source lookup; type-checks the output with `tsc` when `bun install` was run |
-| CLI | `go test ./cmd/mygo` | config, Info.plist, icons, universal binaries, template, dev launch/ready/stop (the test binary plays the app), watcher and `go list` inputs, resources (platform directories, universal pairs, staging, conflicts, dev placement; builds for every OS), frontend embedding (compiles an app with the overlay), `.DS_Store` against a dmgbuild golden file, a real DMG (`hdiutil`); builds and tools are skipped with `-short` |
+| CLI | `go test ./cmd/mygo` | config, Info.plist, icons, universal binaries, template, dev launch/ready/stop (the test binary plays the app), watcher and `go list` inputs, the console's output (replayed as a terminal shows it), resources (platform directories, universal pairs, staging, conflicts, dev placement; builds for every OS), frontend embedding (compiles an app with the overlay), `.DS_Store` against a dmgbuild golden file, a real DMG (`hdiutil`); builds and tools are skipped with `-short` |
 | runtime | `bun run test` | the injected runtime, `mygo-runtime` and the plugins' packages (against a fake Go side on the real runtime, `plugins/fake-go.ts`) |
 | plugins | `go test ./plugins/...` | the fetch plugin against `httptest` servers, the WebSocket client against a test server (ordering, fragments, pings, closing handshakes); the terminal's binding of libghostty-vt (layouts, rendering, encoders, selections), its pseudo-terminals, and its view through `Tester` with real shells: typing, keys as programs ask, input methods, mouse reports, selecting and copying, pasting, scrollback, exits (the library is downloaded, or named by `MYGO_GHOSTTY_VT`; `-short` skips them) |
 | native UI | `go test ./ui ./internal/text ./internal/scene ./internal/raster ./internal/svg ./internal/gpu/...` | the GPU renderers against the CPU renderer (Direct3D on Windows, Metal on macOS, OpenGL on Linux); views through `Tester`: input, focus, editing, lists, overlays, frames that fill the glyph atlas; text layout and caret geometry; atlas zones and repacking; the CPU renderer against its formulas; SVG parsing and drawing, with `FuzzParse`; `go test -run '^$' -bench . ./ui` times a frame |
 | GUI | `MYGO_E2E=1 go test ./internal/e2e` | the real backend: IPC, channels, protocol, Eval, geometry, capture, menus, window.open, native UI (frames, clicks, input methods replacing typed text, file drops, assistive technology reading and acting; on macOS typing, skipped while an input method is selected, and composing; on Linux with `MYGO_GPU=1`, what OpenGL drew in the GtkGLArea, from the first frame and once a window drawing in memory asks for the GPU); on Windows too (a GitHub Actions `windows-latest` runner has WebView2) |
+
+Browsers run the `js` tests of the renderer, the text engine and package
+ui: `GOOS=js GOARCH=wasm go test -c` builds a test binary, which a page
+loads with `wasm_exec.js`, its arguments in `go.argv`, and logs to the
+console. Under Node (`$(go env GOROOT)/lib/wasm/go_js_wasm_exec`), with no
+page, the WebGL tests skip and text falls back to the stub engine.
 
 The XDG variables let the URL scheme test check that GLib opens the scheme
 with the handler it registered; without them it writes to temporary
@@ -2468,8 +2886,9 @@ which npm allows only for packages that exist: the first release uses an
 2. **Extend `internal/platform`** with the smallest mechanism the backends
    need: main-thread only, synchronous, or with a callback that runs on the
    main thread exactly once.
-3. **Implement it in every backend**: `darwin`, `linux`, `windows`, `fake`
-   and `unsupported` (return `platform.ErrUnsupported` or a zero value).
+3. **Implement it in every backend**: `darwin`, `linux`, `windows`, `web`,
+   `fake` and `unsupported` (return `platform.ErrUnsupported` or a zero
+   value).
    Create callbacks once, never per call.
 4. **Wire the core**: hop with `onMain`/`onMainValue`, or `postMain` + `await`
    + `deliver` for asynchronous native results. Start with `needsApp` when
@@ -2497,7 +2916,7 @@ which npm allows only for packages that exist: the first release uses an
 | global shortcuts | Carbon hot keys | X11: `XGrabKey` on the root window (with Caps/Num Lock variants), key presses from a GDK filter. Wayland: the XDG `GlobalShortcuts` portal (see [Linux](#linux-internallinux)) | `RegisterHotKey` |
 | notifications | UserNotifications, packaged apps only; `Group` is the `threadIdentifier`; the delegate is attached at launch, for the click that launched the app | org.freedesktop.Notifications over D-Bus; no `Group` | notification-area balloons (toasts); no `Group` |
 | notification removal | `removeDeliveredNotificationsWithIdentifiers:`; `ClearNotifications` removes all, earlier runs' too | `CloseNotification` on the bus, for those of this run | hides the balloon, which goes away by itself anyway |
-| vibrancy | all materials | ignored | Windows 11 22H2 Mica, Acrylic, Tabbed, in windows created with a material, which have no menu bar |
+| vibrancy | all materials, behind pages and native UI | ignored | Windows 11 22H2 Mica, Acrylic, Tabbed, behind pages and native UI, in windows created with a material, which have no menu bar |
 | traffic lights, Dock | yes | ignored | ignored |
 | hidden title bar | AppKit's traffic lights over a full-size content view | GTK's title buttons in header bars over the page, per `gtk-decoration-layout`; none where the Wayland compositor decorates windows | caption buttons drawn in a layered child window, through DirectComposition over a material; snap layouts; a top edge that resizes |
 | progress bar | Dock tile content view (NSBoxes: NSProgressIndicator does not draw there), app-wide | Unity launcher API over D-Bus (`com.canonical.Unity.LauncherEntry`), app-wide | `ITaskbarList3`, per window |
@@ -2519,9 +2938,12 @@ which npm allows only for packages that exist: the first release uses an
 | window position | honored | ignored by Wayland compositors | honored |
 | resize borders without a title bar | the window's own | the outer 5 px of the page | invisible, outside the window; along the top of a hidden title bar, a child window |
 | content protection, click-through | yes | ignored | yes |
+| flyouts | borderless nonactivating `NSPanel` child window, or an `NSPopover`; placed in the visible frame | `GTK_WINDOW_POPUP` (override-redirect, placed in the work area, on X11; `xdg_popup` with `gdk_window_move_to_rect` on Wayland); focusable ones grab the seat | owned `WS_POPUP` + `WS_EX_TOOLWINDOW`, `WS_EX_NOACTIVATE` unless focusable, `CS_DROPSHADOW` for a shadow, with corners rounded by DWM on Windows 11 |
 | custom scheme origin | `<scheme>://localhost` | `<scheme>://localhost` | `http://<scheme>.localhost` (the page's `location`) |
+| `LoadHTML` documents | a reload loads the base URL (`about:blank` without one), so the core cancels it (`Navigation.Reload`) and loads the HTML again; not in the history | as macOS | as macOS, but in the history: going back to one with a base URL loads that URL |
 | window.open | keeps the opener | independent window | independent window |
 | native UI surface | layer-backed NSView, frames from `CADisplayLink` (a timer at the display's rate before macOS 14), input methods through NSTextInputClient | GtkGLArea (GtkDrawingArea without a GPU), GtkIMMulticontext | `MyGoSurface` child window, IMM32 |
 | native UI data drags | NSDraggingSession, NSPasteboardItemDataProvider, NSDraggingDestination | GTK drag contexts, MIME selections, text/uri-list | OLE IDataObject, IDropSource, IDropTarget, Shell drag images |
 | native UI accessibility | `NSAccessibilityElement` subclasses | ATK objects (GObject types registered through purego), bridged to AT-SPI by GTK | UI Automation fragments (COM objects; assembly thunks for the methods taking doubles) |
 | native UI rendering | Metal, into a CAMetalLayer presenting with the Core Animation transaction | OpenGL 3.3 or ES 3.0 in the GtkGLArea's render signal; on the CPU, painted with cairo, where OpenGL runs on the CPU | Direct3D 11 (WARP without a GPU), flip-model swap chain |
+| web views in native UI | WKWebView in a clip view under the surface; `hitTest:` lets the pointer through | WebKitWebView in a `GtkLayout` under the area in a `GtkOverlay`; an input shape lets the pointer through | WebView2 composition controller in a DirectComposition target under the frames'; the surface sends it the mouse |

@@ -34,6 +34,9 @@ func (w *widgetTextInput) publish() {
 	ed := w.ed
 	if ed.document != nil {
 		if ed.buf.root != ed.published.root {
+			if !ed.bufferDirty {
+				ed.nativeBufferBefore = ed.published
+			}
 			snapshot, ok := ed.document.compareRestore(ed.published, ed.buf.root)
 			if !ok {
 				ed.loadBuffer(snapshot)
@@ -67,7 +70,7 @@ func (w *widgetTextInput) prepare() {
 	if s := w.state(); s != nil {
 		w.processing = true
 		defer func() { w.processing = false }()
-		w.ed.process(&w.rt.c, &Element{st: s})
+		w.ed.process(&w.rt.c, &node{st: s})
 		w.publish()
 	}
 }
@@ -260,7 +263,7 @@ func (w *widgetTextInput) layout() *text.Layout {
 		params := ed.layout.Params
 		params.Text = ed.displayText()
 		params.Spans = ""
-		if !ed.password && ed.compose == "" {
+		if !ed.password {
 			params.Spans, _ = ed.rangeSpans(0, ed.buf.n)
 		}
 		ed.shapeInput(params)

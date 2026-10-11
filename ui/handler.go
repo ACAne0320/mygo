@@ -38,10 +38,14 @@ const (
 
 // InputEvent is input an element takes as it comes (HandleInput).
 type InputEvent struct {
-	Kind   InputKind
-	Key    Key
-	Mods   Modifiers
-	Repeat bool
+	Kind InputKind
+	Key  Key
+	// PhysicalKey is Key by position on an ANSI US keyboard, whatever the
+	// layout types: the S key is KeyS on a Cyrillic layout too, where Key
+	// is KeyUnknown. KeyUnknown where the platform does not report it.
+	PhysicalKey Key
+	Mods        Modifiers
+	Repeat      bool
 	// Text of InputText, InputCompose and InputCommand, and Caret the
 	// rune of an InputCompose's caret.
 	Text  string
@@ -70,7 +74,7 @@ type InputEvent struct {
 // It is for widgets that need every key as it is pressed, such as a
 // terminal; most widgets ask about their input as they are built instead
 // (Clicked, Shortcut, Dragged).
-func (e *Element) HandleInput(fn func(ev InputEvent) bool) *Element {
+func (e *node) HandleInput(fn func(ev InputEvent) bool) *node {
 	e.inputFn = fn
 	return e
 }
@@ -79,7 +83,7 @@ func (e *Element) HandleInput(fn func(ev InputEvent) bool) *Element {
 // while it has the keyboard focus, with their composition at r, the caret,
 // relative to the element's box: candidate windows show there. Its
 // InputText and Compose events (HandleInput) bring the text.
-func (e *Element) TextCaret(r Rect) *Element {
+func (e *node) TextCaret(r Rect) *node {
 	e.caret, e.takesText = r, true
 	return e
 }

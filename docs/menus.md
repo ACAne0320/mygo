@@ -193,6 +193,12 @@ menu, clicks reach `OnClick`, and `OnRightClick` gets right-clicks. Change
 the tray with `SetIcon`, `SetMenu`, `SetToolTip` and, on macOS,
 `SetTitle`, the text next to the icon; `Destroy` removes it.
 
+`Tray.PopUpMenu` opens the menu set with `SetMenu` programmatically. On
+macOS, AppKit places it below the status item and highlights its button
+while the menu is open. To show a menu only on right-click while keeping
+primary clicks available, set the menu in `OnRightClick`, call
+`PopUpMenu`, then clear it with `SetMenu(nil)` when the call returns.
+
 On Linux tray icons use AppIndicator, which needs
 `libayatana-appindicator3`: they show a menu and report no clicks, and
 `NewTray` returns an error without the library.
@@ -202,6 +208,13 @@ Apps that live in the menu bar usually drop their Dock icon on macOS:
 ```go
 mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 ```
+
+For an icon that opens a window of native UI, see
+[the menu bar example](https://github.com/egoist/mygo/tree/main/examples/menubar-native).
+It leaves the tray menu unset on macOS and Windows, uses `OnClick` to
+toggle a frameless window positioned with `Tray.Bounds`, and hides it on
+`OnBlur` or Escape. On Linux, an AppIndicator menu item opens the same
+window.
 
 ## Accelerators
 

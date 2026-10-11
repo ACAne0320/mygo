@@ -61,7 +61,8 @@ func transformedCoverage(s *shape, inv scene.Affine, x, y float32) float32 {
 // Identity operations retain the existing span renderer.
 func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.BackdropImage) {
 	inv, ok := op.Transform.Inverse()
-	if !ok || op.Rect.Empty() {
+	inset := op.Kind == scene.OpShadow && op.Inset
+	if !ok || !inset && op.Rect.Empty() || inset && op.Cast.Empty() {
 		return
 	}
 	radii := scene.Corners(op.Rect, op.Radii, op.Continuous)
@@ -78,7 +79,9 @@ func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.Bac
 	pt := newPainter(op, opacityOf(op.Opacity))
 	border := op.BorderColor.Premul(opacityOf(op.Opacity))
 	box := op.Rect
-	if op.Kind == scene.OpShadow {
+	if inset {
+		box = op.Cast
+	} else if op.Kind == scene.OpShadow {
 		e := 1.5*op.Blur + 1
 		box = scene.Rect{X: box.X - e, Y: box.Y - e, W: box.W + 2*e, H: box.H + 2*e}
 	}
@@ -93,6 +96,20 @@ func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.Bac
 			wx, wy := float32(x)+0.5, float32(y)+0.5
 			lx, ly := inv.Point(wx, wy)
 			p := r.dst.Pix[y*r.dst.Stride+4*x:][:4]
+			if inset {
+				// Inside the box, what the hole, blurred, leaves.
+				caster := newShape(op.Cast, scene.Corners(op.Cast, op.CastRadii, op.Continuous))
+				cov := transformedCoverage(&caster, inv, wx, wy)
+				if !op.Rect.Empty() {
+					hole := transformedShadowAt(op, &outer, lx, ly)
+					if op.Blur < 1 {
+						hole = transformedCoverage(&outer, inv, wx, wy)
+					}
+					cov *= 1 - hole
+				}
+				blend(p, op.Color.Premul(opacityOf(op.Opacity)), cov*clip)
+				continue
+			}
 			if op.Kind == scene.OpShadow {
 				cov := transformedShadowAt(op, &outer, lx, ly)
 				if op.Blur < 1 {
@@ -139,6 +156,8 @@ func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.Bac
 				if px != nil {
 					blend(p, px.Color(lx, ly, b), cov*clip*opacityOf(op.Opacity))
 				}
+			case scene.OpHole:
+				erase(p, cov*clip*opacityOf(op.Opacity))
 			}
 		}
 	}

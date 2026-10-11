@@ -36,22 +36,25 @@ type editor struct {
 	buf       buffer
 	graphemes graphemes
 	editorSelection
-	compose           string
-	composeCaret      int
-	composeSelected   TextInputRange
-	compositionActive bool // one undo transaction for preedit and its commit
-	client            *widgetTextInput
-	value             *string
-	nativeDirty       bool
-	nativeValue       string // bound value before the next widget build publishes input
-	document          *TextBuffer
-	published         TextSnapshot
-	bufferDirty       bool
-	queue             []editEvent
-	multiline         bool
-	readOnly          bool   // selectable text: selected and copied, not edited
-	source            string // the text of selectable text
-	password          bool
+	compose            string
+	composeCaret       int
+	composeSelected    TextInputRange
+	compositionActive  bool // one undo transaction for preedit and its commit
+	client             *widgetTextInput
+	value              *string
+	nativeDirty        bool
+	nativeValue        string // bound value before the next widget build publishes input
+	document           *TextBuffer
+	published          TextSnapshot
+	bufferDirty        bool
+	nativeBufferBefore TextSnapshot
+	queue              []editEvent
+	multiline          bool
+	readOnly           bool   // selectable text: selected and copied, not edited
+	source             string // the text of selectable text
+	password           bool
+	// onPaste sees a paste before it is inserted (OnPaste).
+	onPaste func(text string) bool
 	// leaveEmptyBackspace leaves Backspace to shortcuts while the text is
 	// empty, as a token field's input does to take out a token.
 	leaveEmptyBackspace bool
@@ -143,9 +146,13 @@ func (ed *editor) commitCompose() {
 }
 
 // process applies the input queued for the editor.
-func (ed *editor) process(c *Context, e *Element) {
+func (ed *editor) process(c *context, e *node) {
 	st := e.st
-	for _, ev := range ed.queue {
+	// The queue is taken first: a command may draw a nested frame, as GTK's
+	// clipboard read does, which must not apply the same input again.
+	queue := ed.queue
+	ed.queue = nil
+	for _, ev := range queue {
 		if ev.replace {
 			ed.anchor, ed.caret = min(ev.from, ed.buf.n), min(ev.to, ed.buf.n)
 		}
@@ -176,8 +183,10 @@ func (ed *editor) process(c *Context, e *Element) {
 			ed.command(c, ev.text)
 		}
 	}
-	clear(ed.queue)
-	ed.queue = ed.queue[:0]
+	clear(queue)
+	if ed.queue == nil {
+		ed.queue = queue[:0]
+	}
 	if ed.dragging && st.pressed {
 		rt := c.rt
 		x, y := st.local(rt.pointerX, rt.pointerY)

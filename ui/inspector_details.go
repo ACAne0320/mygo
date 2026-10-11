@@ -78,7 +78,7 @@ func (d *inspDetails) hash() uint64 {
 }
 
 // describe returns the details of e.
-func describe(rt *engine, e *Element) inspDetails {
+func describe(rt *engine, e *node) inspDetails {
 	d := inspDetails{name: elementName(e), id: e.id, source: rt.insp.source}
 	sel := d.name
 	if k, ok := rt.insp.keys[e.id]; ok {
@@ -104,7 +104,7 @@ func describe(rt *engine, e *Element) inspDetails {
 }
 
 // ownStyles returns the styles e sets, as CSS declarations.
-func ownStyles(rt *engine, e *Element) []inspDecl {
+func ownStyles(rt *engine, e *node) []inspDecl {
 	var ds []inspDecl
 	add := func(name, value string) { ds = append(ds, inspDecl{name: name, value: value}) }
 	addColor := func(name string, c Color) {
@@ -242,7 +242,11 @@ func ownStyles(rt *engine, e *Element) []inspDecl {
 		}
 	}
 	for _, sh := range e.shadows {
-		add("box-shadow", fmt.Sprintf("%s %s %s %s %s", pxText(sh.x), pxText(sh.y), pxText(sh.blur), pxText(sh.spread), colorText(sh.color)))
+		inset := ""
+		if sh.inset {
+			inset = "inset "
+		}
+		add("box-shadow", fmt.Sprintf("%s%s %s %s %s %s", inset, pxText(sh.x), pxText(sh.y), pxText(sh.blur), pxText(sh.spread), colorText(sh.color)))
 	}
 	if e.opacitySet && e.opacity < 1 {
 		add("opacity", num(e.opacity))
@@ -355,7 +359,7 @@ func textStyles(ts *textStyle, set uint16) []inspDecl {
 }
 
 // computed returns the values e has as laid out, by name.
-func computed(e *Element) []inspDecl {
+func computed(e *node) []inspDecl {
 	var ds []inspDecl
 	add := func(name, value string) { ds = append(ds, inspDecl{name: name, value: value}) }
 	display := "flex"
@@ -409,7 +413,7 @@ func computed(e *Element) []inspDecl {
 
 // properties returns what e is, its state, and what assistive technology
 // sees of it.
-func properties(rt *engine, e *Element) []inspSection {
+func properties(rt *engine, e *node) []inspSection {
 	yes := func(b bool) string {
 		if b {
 			return "true"

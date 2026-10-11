@@ -42,6 +42,8 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 	case platform.PointerUp:
 		rt.pointerMove(x, y)
 		rt.pointerUp(ev.Button, ev.Clicks)
+	case platform.WebViewPress:
+		rt.webViewPress(x, y, ev.Button)
 	case platform.PointerLeave:
 		rt.pointerIn = false
 		if rt.pressed == nil {
@@ -55,13 +57,18 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise)
 	case platform.KeyPressed:
 		rt.modsChanged(Modifiers(ev.Mods))
-		taken = rt.keyDown(Modifiers(ev.Mods), Key(ev.Key), ev.Repeat)
+		taken = rt.keyDownPhysical(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey), ev.Repeat)
 	case platform.ModifiersChanged:
 		rt.modsChanged(Modifiers(ev.Mods))
 	case platform.KeyReleased:
 		rt.modsChanged(Modifiers(ev.Mods))
+		key, physical := Key(ev.Key), Key(ev.PhysicalKey)
+		if key == KeyUnknown && rt.byPosition[physical] {
+			key = physical
+		}
+		delete(rt.byPosition, physical)
 		if h := rt.focusHandler(); h != nil {
-			rt.deliver(h, InputEvent{Kind: InputKeyUp, Key: Key(ev.Key), Mods: Modifiers(ev.Mods)})
+			rt.deliver(h, InputEvent{Kind: InputKeyUp, Key: key, PhysicalKey: physical, Mods: Modifiers(ev.Mods)})
 		}
 	case platform.TextInput:
 		rt.editEvent(rt.replaced(editEvent{kind: editInsert, text: ev.Text}, ev))
@@ -78,6 +85,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.selection.dragging = false
 		// Keys let go of elsewhere never come back up here.
 		rt.modsChanged(0)
+		clear(rt.byPosition)
 		if p := rt.pressed; p != nil {
 			// The release will not come: an element taking its input
 			// gets one now.
@@ -278,6 +286,7 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, count in
 		// It takes the moves and the release.
 		rt.pressed, rt.pressButton = h, button
 		h.pressed = true
+		h.pressPending = true
 		h.pressX, h.pressY = h.local(x, y)
 		return
 	}
@@ -312,6 +321,7 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, count in
 	}
 	rt.pressed, rt.pressButton = target, button
 	target.pressed, target.pressMods = true, mods
+	target.pressPending = true
 	target.pressX, target.pressY = target.local(x, y)
 	if button == 0 && rt.pressTextSelection(target, x, y, mods, clicks) {
 		return
@@ -526,6 +536,22 @@ func (rt *engine) claimedBy(k keyEvent, window bool) bool {
 // keyDown handles a key pressed, and reports whether an element took it as
 // it came (HandleInput).
 func (rt *engine) keyDown(mods Modifiers, key Key, repeat bool) bool {
+	return rt.keyDownPhysical(mods, key, KeyUnknown, repeat)
+}
+
+// keyDownPhysical is keyDown with the key by position (InputEvent.PhysicalKey).
+// A chord of a key the layout does not type as a US key, as S on a Cyrillic
+// layout, matches shortcuts by that position; plain typing is untouched.
+func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool) bool {
+	if platform.KeyByPosition(platform.Key(key), platform.Key(physical), platform.Modifiers(mods)) {
+		if rt.byPosition == nil {
+			rt.byPosition = map[Key]bool{}
+		}
+		rt.byPosition[physical] = true
+		key = physical
+	} else if !repeat {
+		delete(rt.byPosition, physical)
+	}
 	if rt.inspectKey(mods, key) {
 		return true
 	}
@@ -533,7 +559,7 @@ func (rt *engine) keyDown(mods Modifiers, key Key, repeat bool) bool {
 	if key == KeyEscape && mods == 0 && rt.dragCancel() {
 		return true
 	}
-	if h := rt.focusHandler(); h != nil && !rt.claimed(k) && rt.deliver(h, InputEvent{Kind: InputKeyDown, Key: key, Mods: mods, Repeat: repeat}) {
+	if h := rt.focusHandler(); h != nil && !rt.claimed(k) && rt.deliver(h, InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Mods: mods, Repeat: repeat}) {
 		rt.blinkStart = time.Now()
 		return true
 	}
@@ -559,7 +585,8 @@ func (rt *engine) keyDown(mods Modifiers, key Key, repeat bool) bool {
 		}
 		if r, ok := typedRune(mods, key); ok && (r != ' ' || s.typed != "") {
 			s.typed += string(r)
-			s.typedAt, s.typing = now, true
+			s.typedAt = now
+			s.markTyping()
 			rt.requestFrame()
 			return false
 		}
@@ -669,10 +696,16 @@ func (rt *engine) moveFocus(back bool) {
 	rt.focused = order[next]
 	rt.focusVisible = true
 	rt.blinkStart = time.Now()
-	if s := rt.states[rt.focused]; s != nil && s.editor != nil {
+	s := rt.states[rt.focused]
+	if s != nil && s.editor != nil {
 		s.editor.selectAll()
 	}
 	rt.reveal(rt.focused)
+	if s != nil && s.webView != nil {
+		// Its page takes the keyboard, and Tab leaving it moves on from
+		// here (webViewTabOut).
+		rt.host.tabIntoWebView(s.webView, back)
+	}
 }
 
 // routeKeys delivers the keys pressed since the last frame to the
@@ -715,6 +748,8 @@ func (rt *engine) routeKeys() {
 		}
 		if found {
 			rt.delivered = append(rt.delivered, shortcutReg{id: target, mods: k.mods, key: k.key})
+		} else if k == (keyEvent{0, KeyEscape}) {
+			rt.host.escape()
 		}
 	}
 	rt.keys = rt.keys[:0]
@@ -836,7 +871,10 @@ func abs32(v float32) float32 {
 
 // Clicked reports whether the element was clicked, with the primary
 // button or by Enter or Space while focused, since the last frame.
-func (e *Element) Clicked() bool {
+func (e *node) Clicked() bool {
+	if !e.hasState() {
+		return false
+	}
 	e.flags |= flagClickable
 	if e.disabled() || e.st.clicks == 0 {
 		return false
@@ -847,7 +885,10 @@ func (e *Element) Clicked() bool {
 
 // Clicks returns how many times the element was clicked since the last
 // frame.
-func (e *Element) Clicks() int {
+func (e *node) Clicks() int {
+	if !e.hasState() {
+		return 0
+	}
 	e.flags |= flagClickable
 	if e.disabled() {
 		return 0
@@ -861,10 +902,18 @@ func (e *Element) Clicks() int {
 // ClickModifiers returns the modifier keys held as the element was last
 // clicked, none for a click by the keyboard: with Clicked, a click with
 // Shift or Cmd does something else, as extending a choice.
-func (e *Element) ClickModifiers() Modifiers { return e.st.clickMods }
+func (e *node) ClickModifiers() Modifiers {
+	if !e.hasState() {
+		return 0
+	}
+	return e.st.clickMods
+}
 
 // DoubleClicked reports a double click on the element.
-func (e *Element) DoubleClicked() bool {
+func (e *node) DoubleClicked() bool {
+	if !e.hasState() {
+		return false
+	}
 	e.flags |= flagClickable
 	if e.disabled() || e.st.doubleClicks == 0 {
 		return false
@@ -875,7 +924,10 @@ func (e *Element) DoubleClicked() bool {
 
 // RightClicked reports a click with the secondary button, as for a
 // context menu.
-func (e *Element) RightClicked() bool {
+func (e *node) RightClicked() bool {
+	if !e.hasState() {
+		return false
+	}
 	e.flags |= flagClickable
 	if e.disabled() || e.st.rightClicks == 0 {
 		return false
@@ -890,7 +942,10 @@ func (e *Element) RightClicked() bool {
 // them, as in CSS, and the others hover no more: a button that shows over
 // a row stays as it is pressed, and dragging over other elements does not
 // light them up.
-func (e *Element) Hovered() bool {
+func (e *node) Hovered() bool {
+	if !e.hasState() {
+		return false
+	}
 	e.flags |= flagHover
 	if e.IsDisabled() {
 		return false
@@ -926,22 +981,40 @@ func (rt *engine) pressMove(x0, y0, x1, y1 float32) {
 
 // Pressed reports whether the element is being pressed with the pointer,
 // unless it is disabled.
-func (e *Element) Pressed() bool {
+func (e *node) Pressed() bool {
+	if !e.hasState() {
+		return false
+	}
 	e.flags |= flagClickable | flagHover
 	s := e.st
-	return s.pressed && !e.disabled() && e.c.rt.contains(s, Rect{s.x, s.y, s.w, s.h}, e.c.rt.pointerX, e.c.rt.pointerY)
+	rt := e.c.rt
+	if !s.pressed || e.disabled() || !rt.contains(s, Rect{s.x, s.y, s.w, s.h}, rt.pointerX, rt.pointerY) {
+		return false
+	}
+	if s.pressPending {
+		// A press may choose a row after the view built its selection and
+		// focus colors. Show that choice in this frame, as for a click,
+		// without rebuilding again while the pointer remains held.
+		rt.consumed = true
+	}
+	return true
 }
 
 // Focused reports whether the element has the keyboard focus.
-func (e *Element) Focused() bool { return e.c.rt.focused == e.id && e.c.rt.windowFocused }
+func (e *node) Focused() bool {
+	return e.hasState() && e.c.rt.focused == e.id && e.c.rt.windowFocused
+}
 
 // FocusVisible reports whether the element has the keyboard focus and
 // should show it, because it came from the keyboard.
-func (e *Element) FocusVisible() bool { return e.Focused() && e.c.rt.focusVisible }
+func (e *node) FocusVisible() bool { return e.Focused() && e.c.rt.focusVisible }
 
 // FocusWithin reports whether the element or one of its descendants has
 // the keyboard focus.
-func (e *Element) FocusWithin() bool {
+func (e *node) FocusWithin() bool {
+	if !e.hasState() {
+		return false
+	}
 	rt := e.c.rt
 	for s := rt.states[rt.focused]; s != nil; s = rt.states[s.parent] {
 		if s.id == e.id {
@@ -956,7 +1029,10 @@ func (e *Element) FocusWithin() bool {
 
 // Focus gives the element the keyboard focus. Called in every frame, it
 // keeps it there; AutoFocus gives it once.
-func (e *Element) Focus() *Element {
+func (e *node) Focus() *node {
+	if !e.hasState() {
+		return e
+	}
 	e.flags |= flagFocusable
 	rt := e.c.rt
 	if rt.focused != e.id {
@@ -968,8 +1044,8 @@ func (e *Element) Focus() *Element {
 
 // AutoFocus gives the element the keyboard focus in the frame it appears,
 // as the first field of a dialog.
-func (e *Element) AutoFocus() *Element {
-	if e.st.born == e.c.rt.frame {
+func (e *node) AutoFocus() *node {
+	if e.hasState() && e.st.born == e.c.rt.frame {
 		e.Focus()
 	}
 	return e
@@ -978,7 +1054,7 @@ func (e *Element) AutoFocus() *Element {
 // Shortcut reports whether the key with exactly the modifiers mods was
 // pressed while the element or one of its descendants had the focus. The
 // innermost element handling a key gets it; a disabled one handles none.
-func (e *Element) Shortcut(mods Modifiers, key Key) bool {
+func (e *node) Shortcut(mods Modifiers, key Key) bool {
 	if e.disabled() {
 		return false
 	}
@@ -988,7 +1064,10 @@ func (e *Element) Shortcut(mods Modifiers, key Key) bool {
 // PointerPosition returns the pointer's position relative to the
 // element's box and whether it is over the element. Elements asking for it
 // get a frame whenever the pointer moves over them.
-func (e *Element) PointerPosition() (x, y float32, over bool) {
+func (e *node) PointerPosition() (x, y float32, over bool) {
+	if !e.hasState() {
+		return 0, 0, false
+	}
 	e.flags |= flagTrackPointer
 	rt := e.c.rt
 	s := e.st
@@ -998,7 +1077,10 @@ func (e *Element) PointerPosition() (x, y float32, over bool) {
 
 // Dragged reports how far the pointer moved in the element's local axes
 // since the last frame while pressing it.
-func (e *Element) Dragged() (dx, dy float32, ok bool) {
+func (e *node) Dragged() (dx, dy float32, ok bool) {
+	if !e.hasState() {
+		return 0, 0, false
+	}
 	e.flags |= flagDraggable
 	s := e.st
 	if !s.pressed {
@@ -1010,11 +1092,40 @@ func (e *Element) Dragged() (dx, dy float32, ok bool) {
 	return s.dragX, s.dragY, true
 }
 
-// Changed reports whether a widget's value changed since the last frame.
-func (e *Element) Changed() bool { return e.st.changed }
+// Changed applies pending input to the controls built so far and reports
+// whether this widget's value changed in this build pass. Configure controls
+// before querying their response; the bound value is updated before returning.
+func (e *node) Changed() bool {
+	if e.hasState() {
+		e.c.rt.applyInputs()
+	}
+	if e.hasState() && e.st.changed {
+		e.c.rt.consumed = true
+		return true
+	}
+	return false
+}
 
-// Submitted reports whether Enter was pressed in a single-line text input.
-func (e *Element) Submitted() bool { return e.st.submitted }
+// Submitted applies pending input to the controls built so far and reports
+// whether Enter was pressed in a single-line text input. Configure controls
+// before querying their response; the bound value is updated before returning.
+func (e *node) Submitted() bool {
+	if !e.hasState() {
+		return false
+	}
+	e.c.rt.applyInputs()
+	return e.st.submitted
+}
+
+// Dismissed reports whether pressing Escape or clicking outside closed the
+// dialog or popover (Modal, DialogBase, Popover, PopoverBase) returning the
+// element, in the frame it did, setting its *open to false: one that must
+// stay open sets it back to true.
+//
+//	if ui.Modal(c, &app.editing, edit).Dismissed() && app.unsaved {
+//		app.editing = true
+//	}
+func (e *node) Dismissed() bool { return e.dismissed }
 
 // scrollbarPress starts dragging the thumb of the scroll container under
 // the pointer when the press is on its scroll bar, or pages toward the
@@ -1073,4 +1184,4 @@ func (rt *engine) modsChanged(mods Modifiers) {
 // Modifiers returns the modifier keys held now, as the last key, pointer
 // or modifier event said: a view showing each row's shortcut while Cmd is
 // held reads it, and draws again as it changes.
-func (c *Context) Modifiers() Modifiers { return c.rt.mods }
+func (c *context) Modifiers() Modifiers { return c.rt.mods }

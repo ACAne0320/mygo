@@ -37,10 +37,15 @@ platform, and are skipped with a note elsewhere: macOS apps are signed and
 put in disk images on macOS only, and Windows installers are made on other
 systems only where [NSIS](#the-installer) is installed.
 
+The CLI defaults to `CGO_ENABLED=0`. If an app's dependencies need cgo,
+set `CGO_ENABLED=1` in the environment for `mygo dev`, `mygo build` and
+`mygo generate`. Those builds need a C compiler for the target platform;
+when cross-compiling, set `CC` to a suitable cross compiler.
+
 | Platform | In `build/<os>-<arch>/` |
 |---|---|
-| macOS | `My App.app`, signed, and `My App 0.1.0.dmg` |
-| Windows | `My App.exe`, the files of the app, and the installer `My App Setup 0.1.0.exe` |
+| macOS | `My App.app`, signed, and `My App 0.1.0 arm64.dmg` (`My App 0.1.0.dmg` for `darwin/universal`) |
+| Windows | `My App.exe`, the files of the app, and the installer `My App Setup 0.1.0 amd64.exe` |
 | Linux | `my-app`, `my-app.desktop`, `my-app.png`, `my-app.xml` for the file types the app defines, the files of the app, their archive `my-app-0.1.0-linux-amd64.tar.gz` with [`install.sh`](#the-install-script), and the Debian package `my-app_0.1.0_amd64.deb` |
 
 Other flags: `-debug` keeps development features such as the inspector,
@@ -287,7 +292,9 @@ window. A `.syso` file of your own in the main package replaces them.
 
 ### The installer
 
-`mygo build` also makes `My App Setup 1.2.0.exe`. It installs the app for
+`mygo build` also makes `My App Setup 1.2.0 amd64.exe`, named for its
+architecture as the disk images are, so that the installers of two
+targets, uploaded to one release, keep both. It installs the app for
 the current user in `%LOCALAPPDATA%\Programs\My App`, which needs no
 administrator rights and lets the app [update itself](updates.md), adds a
 Start menu shortcut and an uninstaller listed in Settings, and registers

@@ -1,4 +1,4 @@
-//go:build !darwin && !(linux && (amd64 || arm64)) && !(windows && (amd64 || arm64))
+//go:build !darwin && !(linux && (amd64 || arm64)) && !(windows && (amd64 || arm64)) && !js
 
 package e2e
 
@@ -17,6 +17,8 @@ func pressShortcut(string, bool) (bool, bool) { return false, false }
 func endSheet(*mygo.Window) (bool, bool) { return false, false }
 
 func click(*mygo.Window, float64, float64) bool { return false }
+
+func appClick(*mygo.Window, float64, float64) bool { return false }
 
 func drag(*mygo.Window, [][2]float64) bool { return false }
 
@@ -52,6 +54,7 @@ func fullScreenHidesToolbar(*mygo.Window) (bool, bool) { return false, false }
 
 // Only macOS windows have traffic lights.
 func trafficLights(*mygo.Window) (float64, float64, bool) { return 0, 0, false }
+func setWindowAppearance(*mygo.Window, bool)              {}
 
 func movePointer(int, int) bool                { return false }
 func pressButton(bool) bool                    { return false }
@@ -103,6 +106,9 @@ func glSurface(*mygo.Window) (string, []byte, int, int, bool) { return "", nil, 
 func memoryUI(*testing.T) bool                                { return false }
 func surfaceOnScreen(*mygo.Window) ([]byte, bool)             { return nil, false }
 
+// Only Windows reads the screen over native UI.
+func screenColor(*mygo.Window, float64, float64) (uint8, uint8, uint8, bool) { return 0, 0, 0, false }
+
 // Only macOS has key-value observing.
 func observe(*mygo.Window) (func(), bool) { return nil, false }
 
@@ -114,8 +120,13 @@ func choosePopupItem(string) bool                    { return false }
 // themselves here (GTK's filtering, IMM32's VK_PROCESSKEY), which a
 // composition the test makes up does not show.
 func pressKey(*mygo.Window, uint16, string) bool { return false }
+func pressTab(*mygo.Window, bool) bool           { return false }
+
+func dragFiles(*mygo.Window, float64, float64, []string) (bool, bool) { return false, false }
 
 // AppKit's older accessibility API is macOS's.
 func axAttribute(*mygo.Window, string, string) (string, bool, bool, bool) {
 	return "", false, false, false
 }
+
+func pressEscape(*mygo.Window) bool { return false }

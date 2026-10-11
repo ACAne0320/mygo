@@ -41,16 +41,16 @@ func (t Transform) Then(next Transform) Transform {
 
 // Transform sets the element's visual transform. Its origin is the center
 // of its border box unless TransformOrigin changes it.
-func (e *Element) Transform(t Transform) *Element { e.transform = t; return e }
+func (e *node) Transform(t Transform) *node { e.transform = t; return e }
 
 // Translate moves the element after its existing transform.
-func (e *Element) Translate(x, y float32) *Element {
+func (e *node) Translate(x, y float32) *node {
 	e.transform = e.transform.Then(Translation(x, y))
 	return e
 }
 
 // Scale scales the element after its existing transform, around its origin.
-func (e *Element) Scale(x, y float32) *Element {
+func (e *node) Scale(x, y float32) *node {
 	e.transform = e.transform.Then(Scaling(x, y))
 	return e
 }
@@ -58,7 +58,7 @@ func (e *Element) Scale(x, y float32) *Element {
 // TransformOrigin sets the origin as fractions of the border box:
 // (0,0) is the top-left and (0.5,0.5) the center. Values outside the box
 // are allowed. Translation does not depend on the origin.
-func (e *Element) TransformOrigin(x, y float32) *Element {
+func (e *node) TransformOrigin(x, y float32) *node {
 	finiteTransform(x, y)
 	e.originX, e.originY, e.originSet = x, y, true
 	return e
@@ -72,7 +72,7 @@ func finiteTransform(v ...float32) {
 	}
 }
 
-func (e *Element) transformAt(x, y float32) scene.Affine {
+func (e *node) transformAt(x, y float32) scene.Affine {
 	if !e.transform.m.Set {
 		return scene.Affine{}
 	}
@@ -84,7 +84,7 @@ func (e *Element) transformAt(x, y float32) scene.Affine {
 	return scene.Translation(x, y).Mul(e.transform.m).Mul(scene.Translation(-x, -y))
 }
 
-func (e *Element) visualRect(r Rect) Rect { return transformRect(e.world, r) }
+func (e *node) visualRect(r Rect) Rect { return transformRect(e.world, r) }
 func transformRect(m scene.Affine, r Rect) Rect {
 	b := m.Bounds(scene.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H})
 	return Rect{b.X, b.Y, b.W, b.H}
@@ -92,16 +92,28 @@ func transformRect(m scene.Affine, r Rect) Rect {
 
 // LayoutBounds returns the previous frame's border box before transforms,
 // in the layout's window coordinates. Draw callbacks use these coordinates.
-func (e *Element) LayoutBounds() Rect { s := e.st; return Rect{s.x, s.y, s.w, s.h} }
+func (e *node) LayoutBounds() Rect {
+	if !e.hasState() {
+		return Rect{}
+	}
+	s := e.st
+	return Rect{s.x, s.y, s.w, s.h}
+}
 
 // LocalToWindow maps a point in the previous frame's border box to the window.
-func (e *Element) LocalToWindow(x, y float32) (float32, float32) {
+func (e *node) LocalToWindow(x, y float32) (float32, float32) {
+	if !e.hasState() {
+		return 0, 0
+	}
 	return e.st.world.Point(e.st.x+x, e.st.y+y)
 }
 
 // WindowToLocal maps a window point into the previous frame's border box.
 // ok is false for singular transforms, which take no pointer input.
-func (e *Element) WindowToLocal(x, y float32) (lx, ly float32, ok bool) {
+func (e *node) WindowToLocal(x, y float32) (lx, ly float32, ok bool) {
+	if !e.hasState() {
+		return 0, 0, false
+	}
 	m, ok := e.st.world.Inverse()
 	if !ok {
 		return 0, 0, false
@@ -164,18 +176,18 @@ func roundedContains(r Rect, radii [4]float32, x, y float32) bool {
 	return raster.Contains(scene.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H}, radii, continuousCorners, x, y)
 }
 
-func accessBounds(e *Element) platform.RectF {
+func accessBounds(e *node) platform.RectF {
 	r := e.visualRect(Rect{e.x, e.y, e.w, e.h})
 	return platform.RectF{X: float64(r.X), Y: float64(r.Y), W: float64(r.W), H: float64(r.H)}
 }
 
-func laidOutVisualBox(e *Element) Rect {
+func laidOutVisualBox(e *node) Rect {
 	b := laidOutBox(e)
 	if e.st.seen != e.c.rt.frame {
 		return e.Bounds()
 	}
-	var world func(e *Element) scene.Affine
-	world = func(e *Element) scene.Affine {
+	var world func(e *node) scene.Affine
+	world = func(e *node) scene.Affine {
 		x, y := laidOutOrigin(e)
 		if e.isInline() {
 			r := laidOutBox(e)
@@ -199,8 +211,8 @@ func (p *Painter) inlineTransforms() bool {
 	if p.inline == nil {
 		return false
 	}
-	var walk func(*Element) bool
-	walk = func(e *Element) bool {
+	var walk func(*node) bool
+	walk = func(e *node) bool {
 		for ch := e.first; ch != nil; ch = ch.next {
 			if ch.transform.m.Set || walk(ch) {
 				return true
@@ -215,8 +227,8 @@ func (p *Painter) inlineTransform(runeIndex int) scene.Affine {
 	if p.inline == nil {
 		return scene.Affine{}
 	}
-	var find func(e *Element, offset int) *Element
-	find = func(e *Element, offset int) *Element {
+	var find func(e *node, offset int) *node
+	find = func(e *node, offset int) *node {
 		for ch := e.first; ch != nil; ch = ch.next {
 			if runeIndex >= offset+ch.runes[0] && runeIndex < offset+ch.runes[1] {
 				return find(ch, offset+ch.runes[0])
@@ -234,7 +246,7 @@ func (p *Painter) inlineTransform(runeIndex int) scene.Affine {
 
 // Inline glyphs can move into view even when their paragraph's layout box
 // is out of view. Their ancestors' clips still apply when they paint.
-func (p *Painter) inlineVisible(e *Element) bool {
+func (p *Painter) inlineVisible(e *node) bool {
 	for ch := e.first; ch != nil; ch = ch.next {
 		for _, f := range ch.frags {
 			if v := intersect(ch.visualRect(f), p.clip); v.W > 0 && v.H > 0 {

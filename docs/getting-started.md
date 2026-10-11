@@ -101,8 +101,8 @@ go tool mygo dev   # native UI
 
 `mygo dev` builds a development version of the app and starts it, then
 rebuilds and restarts it when you edit a `.go` file, the configuration, the
-icon or a resource. A build that fails, or crashes on start, keeps the
-previous one running. Quit the app, or press Ctrl+C, to stop.
+icon or a resource. A build that fails to compile keeps the previous one
+running. Quit the app, or press Ctrl+C, to stop.
 
 With a web frontend, it also writes `src/mygo.ts` and starts the Vite dev
 server, from which the development app loads its pages: edit `src/main.ts`
@@ -191,8 +191,8 @@ it when there is one, and packages it for the machine's platform in
 
 | Platform | Output |
 |---|---|
-| macOS | `My App.app`, and a disk image `My App 0.1.0.dmg` |
-| Windows | `My App.exe`, and an installer `My App Setup 0.1.0.exe` |
+| macOS | `My App.app`, and a disk image `My App 0.1.0 arm64.dmg` |
+| Windows | `My App.exe`, and an installer `My App Setup 0.1.0 amd64.exe` |
 | Linux | the executable `my-app` with its desktop entry and icon, their archive with `install.sh`, which installs it for the user, and a `.deb` package |
 
 MyGo needs no cgo, so any machine builds for every platform:
@@ -214,11 +214,14 @@ The apps run where they are, but to ship them to users, sign them: see
 - The examples in the repository:
   - with web pages: `examples/hello` (the smallest app), `examples/todo`
     (typed services and events, persistence, dialogs, menus, several
-    windows), `examples/frameless` (a custom title bar),
-    `examples/vibrancy` (a translucent sidebar under an inset title bar)
-    and `examples/native` (menus, a tray icon, dialogs, notifications, a
+    windows), `examples/frameless` (a custom title bar) and
+    `examples/native` (menus, a tray icon, dialogs, notifications, a
     global shortcut, the clipboard and dark mode);
   - with native UI: `examples/clipboard` (copying and dragging text, HTML,
     lazy JSON, and file lists), `examples/counter-native` (a counter with a test of its
-    view) and `examples/gallery` (a tour of the toolkit: layout, widgets,
-    text editing, a list of ten thousand rows, drawing and overlays).
+    view), `examples/vibrancy` (a translucent sidebar under an inset title
+    bar, its material picked in it), `examples/effort-slider` (a web
+    demo's animated slider redrawn: letters blurring in, a burst of
+    pixels, a shaking card) and `examples/gallery` (a tour of the
+    toolkit: layout, widgets, text editing, a list of ten thousand rows,
+    drawing and overlays).

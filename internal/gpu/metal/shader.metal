@@ -13,15 +13,15 @@ using namespace metal;
 
 // One instance per op, as internal/gpu builds them.
 struct Inst {
-	float4 rect;  // x, y, width, height in pixels
-	float4 radii; // top-left, top-right, bottom-right, bottom-left
-	float4 inner; // radii of the border's inner edge, or of the box casting a shadow
+	float4 rect;      // x, y, width, height in pixels
+	float4 radii;     // top-left, top-right, bottom-right, bottom-left
+	float4 inner;     // radii of the border's inner edge, of the box casting a shadow, or of an inner shadow's hole
 	float4 color;
-	float4 color2; // gradient end
-	float4 border; // border color
-	float4 grad;   // gradient start and end points, or stripes
-	float4 uv;	   // texture rectangle, normalized, border widths, or the box casting a shadow
-	float4 clip;   // the innermost clip rectangle
+	float4 color2;    // gradient end
+	float4 border;    // border color
+	float4 grad;      // gradient start and end points, or stripes
+	float4 uv;        // texture rectangle, normalized, border widths, the box casting a shadow, or an inner shadow's hole
+	float4 clip;      // the innermost clip rectangle
 	float4 clipRadii;
 	float4 params;				   // kind, dashed or grayscale, sigma or paint, opacity
 	float4 transform0, transform1; // local-to-frame rows, AA and clip-mask flags
@@ -476,6 +476,15 @@ fragment PSOut ps(VSOut v [[stage_in]], const device Inst *insts [[buffer(0)]],
 			float4 b = premul(i.border) * bc;
 			res = b + res * (1.0f - b.a);
 		}
+	} else if (kind < 1.5f && i.params.y > 0.5f) {
+		// An inner shadow: inside the box, what the hole, blurred, leaves.
+		float sigma = i.params.z;
+		float hole = 0.0f;
+		if (i.uv.z > 0.0f && i.uv.w > 0.0f) {
+			hole = sigma > 0.0f ? boxShadow(v.p, i.uv, sigma, i.inner)
+							   : localCoverage(v.p, i.uv, i.inner, i.transform0.w);
+		}
+		res = premul(i.color) * (localCoverage(v.p, i.rect, i.radii, i.transform0.w) * (1.0f - hole));
 	} else if (kind < 1.5f) {
 		float sigma = i.params.z;
 		float s = sigma > 0.0f ? boxShadow(v.p, i.rect, sigma, i.radii)

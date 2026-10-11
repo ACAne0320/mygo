@@ -19,10 +19,10 @@ func closeFloat(t *testing.T, got, want float32) {
 
 func TestTransformRenderingAndHitCoordinates(t *testing.T) {
 	clicks := 0
-	var box *Element
+	var box *node
 	var events []InputEvent
-	tt := NewTester(func(c *Context) {
-		box = Box(c).Key("target").Absolute().Left(60).Top(50).Size(80, 30).Background(RGB(220, 20, 30)).Rotate(45)
+	tt := coreNewTester(func(c *context) {
+		box = coreBox(c).Key("target").Absolute().Left(60).Top(50).Size(80, 30).Background(RGB(220, 20, 30)).Rotate(45)
 		if box.Clicked() {
 			clicks++
 		}
@@ -59,11 +59,11 @@ func TestTransformRenderingAndHitCoordinates(t *testing.T) {
 }
 
 func TestNestedTransformsComposeAndReflect(t *testing.T) {
-	var child *Element
+	var child *node
 	clicks := 0
-	tt := NewTester(func(c *Context) {
-		Box(c).Absolute().Left(40).Top(30).Size(80, 80).TransformOrigin(0, 0).Scale(2, 2).Translate(10, 5).Children(func() {
-			child = Box(c).Absolute().Left(10).Top(15).Size(20, 10).TransformOrigin(0, 0).Scale(-1, 1).Rotate(90).Background(RGB(10, 120, 220))
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Absolute().Left(40).Top(30).Size(80, 80).TransformOrigin(0, 0).Scale(2, 2).Translate(10, 5).Children(func() {
+			child = coreBox(c).Absolute().Left(10).Top(15).Size(20, 10).TransformOrigin(0, 0).Scale(-1, 1).Rotate(90).Background(RGB(10, 120, 220))
 			if child.Clicked() {
 				clicks++
 			}
@@ -84,13 +84,13 @@ func TestNestedTransformsComposeAndReflect(t *testing.T) {
 }
 
 func TestTransformedNestedClips(t *testing.T) {
-	var parent, child *Element
+	var parent, child *node
 	clicks := 0
-	tt := NewTester(func(c *Context) {
-		parent = Box(c).Absolute().Left(50).Top(50).Size(80, 60).Rotate(30).Radius(12).Clip()
+	tt := coreNewTester(func(c *context) {
+		parent = coreBox(c).Absolute().Left(50).Top(50).Size(80, 60).Rotate(30).Radius(12).Clip()
 		parent.Children(func() {
-			Box(c).Size(50, 50).Clip().Scale(1.2, 0.8).Children(func() {
-				child = Box(c).Size(100, 80).Shrink(0).Background(RGB(230, 0, 0))
+			coreBox(c).Size(50, 50).Clip().Scale(1.2, 0.8).Children(func() {
+				child = coreBox(c).Size(100, 80).Shrink(0).Background(RGB(230, 0, 0))
 				if child.Clicked() {
 					clicks++
 				}
@@ -119,12 +119,12 @@ func TestTransformedNestedClips(t *testing.T) {
 func TestTransformCaretAccessibilityAndAnchor(t *testing.T) {
 	value := "hello"
 	open := true
-	var input, panel *Element
-	tt := NewTester(func(c *Context) {
-		Box(c).Absolute().Left(80).Top(50).Size(130, 60).Scale(1.5, 1.2).Rotate(20).Children(func() {
-			input = TextInput(c, &value).Width(100).AutoFocus().Label("transformed input")
+	var input, panel *node
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Absolute().Left(80).Top(50).Size(130, 60).Scale(1.5, 1.2).Rotate(20).Children(func() {
+			input = coreTextInput(c, &value).Width(100).AutoFocus().Label("transformed input")
 		})
-		panel = Popover(c, input, &open, func() { Text(c, "anchored") })
+		panel = corePopover(c, input, &open, func() { coreText(c, "anchored") })
 	}, 500, 300)
 	s := input.st
 	r := transformRect(s.world, s.editor.caretRect(s))
@@ -149,7 +149,7 @@ func TestTransformCaretAccessibilityAndAnchor(t *testing.T) {
 		t.Fatal("no painted caret")
 	}
 	tt.send(platform.SurfaceEvent{Kind: platform.AccessibilityOn})
-	n := node(t, tt.h.access, platform.RoleTextField, "transformed input")
+	n := accessNode(t, tt.h.access, platform.RoleTextField, "transformed input")
 	b := input.Bounds()
 	closeFloat(t, float32(n.Bounds.X), b.X)
 	closeFloat(t, float32(n.Bounds.Y), b.Y)
@@ -164,10 +164,10 @@ func TestTransformCaretAccessibilityAndAnchor(t *testing.T) {
 
 func TestTransformedTextInputClientGeometry(t *testing.T) {
 	client := &primitiveClient{text: "hello", selection: TextInputSelection{Range: TextInputRange{Start: 3, End: 3}}}
-	var e *Element
+	var e *node
 	xScale := float32(1.5)
-	tt := NewTester(func(c *Context) {
-		e = Box(c).Absolute().Left(80).Top(60).Size(100, 40).TransformOrigin(0, 0).Scale(xScale, 1.2).Rotate(30).HandleTextInput(client).AutoFocus()
+	tt := coreNewTester(func(c *context) {
+		e = coreBox(c).Absolute().Left(80).Top(60).Size(100, 40).TransformOrigin(0, 0).Scale(xScale, 1.2).Rotate(30).HandleTextInput(client).AutoFocus()
 	}, 400, 250)
 	defer tt.rt.close()
 	native := tt.h.ime.Client
@@ -195,15 +195,15 @@ func TestTransformedTextInputClientGeometry(t *testing.T) {
 }
 
 func TestTransformedContainerTextSelection(t *testing.T) {
-	var first, second *Element
-	tt := NewTester(func(c *Context) {
-		Column(c).Absolute().Left(100).Top(70).Width(160).Rotate(30).Selectable().Children(func() {
-			first = Text(c, "Alpha beta")
-			second = Text(c, "Gamma delta")
+	var first, second *node
+	tt := coreNewTester(func(c *context) {
+		coreColumn(c).Absolute().Left(100).Top(70).Width(160).Rotate(30).Selectable().Children(func() {
+			first = coreText(c, "Alpha beta")
+			second = coreText(c, "Gamma delta")
 		})
 	}, 400, 250)
 	defer tt.rt.close()
-	point := func(e *Element, at int) (float32, float32) {
+	point := func(e *node, at int) (float32, float32) {
 		ed := e.st.editor
 		x, y, h := ed.layout.Caret(at)
 		return e.LocalToWindow(ed.originX+x, ed.originY+y+h/2)
@@ -220,9 +220,9 @@ func TestTransformedContainerTextSelection(t *testing.T) {
 }
 
 func TestTransformedNativeDragPreviewHotspot(t *testing.T) {
-	var e *Element
-	tt := NewTester(func(c *Context) {
-		e = Box(c).Absolute().Left(80).Top(60).Size(80, 40).Scale(1.5, 1.2).Rotate(30).Background(RGB(230, 20, 30)).DragData(transfer.TextData("drag"))
+	var e *node
+	tt := coreNewTester(func(c *context) {
+		e = coreBox(c).Absolute().Left(80).Top(60).Size(80, 40).Scale(1.5, 1.2).Rotate(30).Background(RGB(230, 20, 30)).DragData(transfer.TextData("drag"))
 	}, 400, 250)
 	defer tt.rt.close()
 	x, y := e.LocalToWindow(15, 15)
@@ -243,10 +243,10 @@ func TestTransformedNativeDragPreviewHotspot(t *testing.T) {
 }
 
 func TestTransformedCustomCaretAndCapture(t *testing.T) {
-	var e *Element
+	var e *node
 	var got InputEvent
-	tt := NewTester(func(c *Context) {
-		e = Box(c).Absolute().Left(60).Top(70).Size(50, 40).Scale(2, 1).Rotate(-25).Focusable().AutoFocus().TextCaret(Rect{10, 5, 1, 16})
+	tt := coreNewTester(func(c *context) {
+		e = coreBox(c).Absolute().Left(60).Top(70).Size(50, 40).Scale(2, 1).Rotate(-25).Focusable().AutoFocus().TextCaret(Rect{10, 5, 1, 16})
 		e.HandleInput(func(ev InputEvent) bool { got = ev; return true })
 	}, 300, 220)
 	caret, active := tt.TextCaret()
@@ -269,10 +269,10 @@ func TestTransformedCustomCaretAndCapture(t *testing.T) {
 }
 
 func TestSingularTransformIsInvisibleAndDoesNotHit(t *testing.T) {
-	var e *Element
+	var e *node
 	clicks := 0
-	tt := NewTester(func(c *Context) {
-		e = Box(c).Size(100, 50).Scale(0, 1).Background(RGB(255, 0, 0))
+	tt := coreNewTester(func(c *context) {
+		e = coreBox(c).Size(100, 50).Scale(0, 1).Background(RGB(255, 0, 0))
 		if e.Clicked() {
 			clicks++
 		}
@@ -292,9 +292,9 @@ func TestSingularTransformIsInvisibleAndDoesNotHit(t *testing.T) {
 func TestTransformUpdatesDamageAndTransitionGeometry(t *testing.T) {
 	x := float32(0)
 	angle := float32(0)
-	var e *Element
-	tt, now := clockTester(func(c *Context) {
-		e = Box(c).Absolute().Left(x).Top(40).Size(50, 30).Rotate(angle).Background(RGB(240, 0, 0)).Transition(ElementTransition{Duration: time.Second, Ease: Linear})
+	var e *node
+	tt, now := clockTester(func(c *context) {
+		e = coreBox(c).Absolute().Left(x).Top(40).Size(50, 30).Rotate(angle).Background(RGB(240, 0, 0)).Transition(ElementTransition{Duration: time.Second, Ease: Linear})
 	}, 250, 160)
 	x, angle = 100, 45
 	tt.Frame()
@@ -311,11 +311,11 @@ func TestTransformUpdatesDamageAndTransitionGeometry(t *testing.T) {
 }
 
 func TestInlineTransformMovesGlyphsAndInteraction(t *testing.T) {
-	var link *Element
+	var link *node
 	clicks := 0
-	tt := NewTester(func(c *Context) {
-		Text(c, "Before ").Absolute().Left(30).Top(30).FontSize(22).Children(func() {
-			link = Text(c, "LINK").TextColor(RGB(230, 0, 0)).TextBackground(RGB(255, 240, 0)).Underline().Translate(50, 30).Rotate(8)
+	tt := coreNewTester(func(c *context) {
+		coreText(c, "Before ").Absolute().Left(30).Top(30).FontSize(22).Children(func() {
+			link = coreText(c, "LINK").TextColor(RGB(230, 0, 0)).TextBackground(RGB(255, 240, 0)).Underline().Translate(50, 30).Rotate(8)
 			if link.Clicked() {
 				clicks++
 			}
@@ -343,7 +343,7 @@ func TestInlineTransformMovesGlyphsAndInteraction(t *testing.T) {
 }
 
 func TestTransformedViewStaysIdle(t *testing.T) {
-	tt := NewTester(func(c *Context) { Box(c).Size(80, 40).Rotate(10).Translate(50, 30).Background(RGB(20, 80, 120)) }, 200, 120)
+	tt := coreNewTester(func(c *context) { coreBox(c).Size(80, 40).Rotate(10).Translate(50, 30).Background(RGB(20, 80, 120)) }, 200, 120)
 	if tt.rt.animating || tt.rt.repainting || tt.h.requested.Load() || tt.rt.timer != nil || tt.rt.repaintTimer != nil {
 		t.Fatal("static transformed content scheduled work")
 	}

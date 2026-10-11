@@ -25,7 +25,7 @@ type valueDrag struct {
 	offX     float32
 	offY     float32
 	over     uint64
-	elem     *Element
+	elem     *node
 	canceled bool
 	native   bool
 }
@@ -35,7 +35,7 @@ type valueDrag struct {
 // element follows the pointer, and the element taking the value under it
 // gets it when the pointer is released (Drop). A press dragging is no
 // click. Dragging reports the drag.
-func (e *Element) Drag(value any) *Element {
+func (e *node) Drag(value any) *node {
 	e.flags |= flagDraggable | flagHover
 	e.st.dragValue = value
 	if d := e.c.rt.drag; d != nil && d.src == e.id {
@@ -50,7 +50,7 @@ func (e *Element) Drag(value any) *Element {
 
 // dragFrom makes the element the source of a value that value returns as
 // the drag starts, as the rows chosen in a list.
-func (e *Element) dragFrom(value func() any) *Element {
+func (e *node) dragFrom(value func() any) *node {
 	e.flags |= flagDraggable | flagHover
 	e.st.dragFn = value
 	if d := e.c.rt.drag; d != nil && d.src == e.id {
@@ -60,7 +60,7 @@ func (e *Element) dragFrom(value func() any) *Element {
 }
 
 // Dragging reports whether the element is dragging its value (Drag).
-func (e *Element) Dragging() bool {
+func (e *node) Dragging() bool {
 	d := e.c.rt.drag
 	return d != nil && d.src == e.id && !d.canceled
 }
@@ -71,7 +71,7 @@ func (e *Element) Dragging() bool {
 //	if f, ok := ui.Drop[*File](folder); ok {
 //		app.move(f, dir)
 //	}
-func Drop[T any](e *Element) (T, bool) {
+func coreDrop[T any](e *node) (T, bool) {
 	var zero T
 	e.flags |= flagValueDrop
 	e.st.accepts = func(v any) bool { _, ok := v.(T); return ok }
@@ -85,7 +85,7 @@ func Drop[T any](e *Element) (T, bool) {
 // DragOver makes e take values of type T dragged within the window, as
 // Drop does, and returns the value dragged over it, for showing it would
 // take it.
-func DragOver[T any](e *Element) (T, bool) {
+func coreDragOver[T any](e *node) (T, bool) {
 	var zero T
 	e.flags |= flagValueDrop
 	e.st.accepts = func(v any) bool { _, ok := v.(T); return ok }
@@ -275,7 +275,7 @@ func (rt *engine) paintDrag(p *Painter, w, h float32) {
 	}
 }
 
-func hasVisualTransform(e *Element) bool {
+func hasVisualTransform(e *node) bool {
 	if e.world.Set {
 		return true
 	}
@@ -287,14 +287,14 @@ func hasVisualTransform(e *Element) bool {
 	return false
 }
 
-func restoreVisual(e *Element) {
+func restoreVisual(e *node) {
 	e.world = e.st.world
 	for ch := e.first; ch != nil; ch = ch.next {
 		restoreVisual(ch)
 	}
 }
 
-func shiftVisual(e *Element, dx, dy float32) {
+func shiftVisual(e *node, dx, dy float32) {
 	e.world = scene.Translation(dx, dy).Mul(e.world)
 	for ch := e.first; ch != nil; ch = ch.next {
 		shiftVisual(ch, dx, dy)
@@ -309,7 +309,7 @@ func itoa(n int) string {
 }
 
 // shift moves an element and those inside it by (dx, dy).
-func shift(e *Element, dx, dy float32) {
+func shift(e *node, dx, dy float32) {
 	e.x, e.y = e.x+dx, e.y+dy
 	for i := range e.frags {
 		e.frags[i].X += dx

@@ -150,7 +150,8 @@ func TestGlyphShades(t *testing.T) {
 		t.Skip("font smoothing is off")
 	}
 	for i := 1; i < Shades; i++ {
-		if ink[i] <= ink[i-1] {
+		// Browsers' canvases embolden in fewer steps than Core Text.
+		if ink[i] < ink[i-1] || ink[i] == ink[i-1] && runtime.GOOS != "js" {
 			t.Errorf("ink of the shades %v", ink)
 		}
 	}
@@ -191,6 +192,34 @@ func TestThick(t *testing.T) {
 	unsmoothed.shaded = false
 	if plain, thick := ink(&unsmoothed, Shades-1), ink(&unsmoothed, Thick); thick <= plain {
 		t.Errorf("thick text has ink %d unsmoothed, other text %d", thick, plain)
+	}
+}
+
+// TestFlat rasterizes Flat text unsmoothed, thinner than the darkest shade
+// where the engine smooths fonts, and as other text elsewhere.
+func TestFlat(t *testing.T) {
+	s := newSystem()
+	l := s.Layout(Params{Text: "O", Style: Style{Size: 13}})
+	g := l.Lines[0].Glyphs[0]
+	ink := func(f *Font, shade Shade) (n int) {
+		img := s.Glyph(f, g.ID, 2, 0, shade, false)
+		for y := range int(img.H) {
+			for x := range int(img.W) {
+				n += int(s.MaskAtlas.Pix[(int(img.Y)+y)*s.MaskAtlas.W+int(img.X)+x])
+			}
+		}
+		return n
+	}
+	dark, flat := ink(g.Font, 0), ink(g.Font, Flat)
+	unsmoothed := *g.Font
+	unsmoothed.shaded = false
+	if plain := ink(&unsmoothed, 0); flat != plain {
+		t.Errorf("flat text has ink %d, unsmoothed text %d", flat, plain)
+	}
+	// Browsers' canvases smooth text as they do, and draw Flat text as the
+	// darkest shade.
+	if g.Font.shaded && flat >= dark && runtime.GOOS != "js" {
+		t.Errorf("flat text has ink %d, the darkest shade %d", flat, dark)
 	}
 }
 
@@ -573,6 +602,11 @@ func TestDigitFeatures(t *testing.T) {
 // the next family that has it, before the system's choice.
 func TestFontListFallback(t *testing.T) {
 	second := map[string]string{"windows": "MS Gothic", "darwin": "Hiragino Mincho ProN", "linux": "Noto Serif CJK JP"}[runtime.GOOS]
+	if second == "" {
+		// Browsers fall back within a list themselves (package text's
+		// canvas engine), and their fonts vary.
+		t.Skip("no font of another family to fall back to on " + runtime.GOOS)
+	}
 	s := newSystem()
 	if err := s.RegisterFont(goregular.TTF, "MyGo Latin"); err != nil {
 		t.Fatal(err)

@@ -27,6 +27,10 @@ func (s *testSurface) StartDataDrag(r platform.DragRequest) {
 }
 func (s *testSurface) CancelDataDrag()                  {}
 func (s *testSurface) SetDropFormats([]transfer.Format) {}
+func (s *testSurface) NewWebView(*platform.WindowOptions, platform.WindowHandler) (platform.WebView, error) {
+	return nil, platform.ErrUnsupported
+}
+func (s *testSurface) PlaceWebViews([]platform.WebViewPlacement) {}
 
 // testGPU is a GPU renderer whose device goes away when fail is set.
 type testGPU struct {
@@ -52,7 +56,7 @@ func gpuHost(t *testing.T, make func() (gpuRenderer, error)) (*windowHost, *test
 	t.Cleanup(func() { newGPU = newGPURenderer })
 	s := &testSurface{}
 	h := &windowHost{conn: &surface.Conn{Surface: s}}
-	h.rt = newRuntime(func(c *Context) { Text(c, "Hello") }, h)
+	h.rt = newRuntime(func(c *context) { coreText(c, "Hello") }, h)
 	return h, s, func() { h.event(platform.SurfaceEvent{Kind: platform.SurfaceFrame}) }
 }
 
@@ -177,9 +181,9 @@ func TestEveryFrameOnTheGPU(t *testing.T) {
 	g := &testGPU{}
 	h, s, frame := gpuHost(t, func() (gpuRenderer, error) { return g, nil })
 	x := float32(10)
-	h.rt = newRuntime(func(c *Context) {
-		Box(c).Fill().Background(RGB(200, 200, 200)).Children(func() {
-			Box(c).Size(10, 10).Background(RGB(0, 0, 255)).Absolute().Left(x).Top(10)
+	h.rt = newRuntime(func(c *context) {
+		coreBox(c).Fill().Background(RGB(200, 200, 200)).Children(func() {
+			coreBox(c).Size(10, 10).Background(RGB(0, 0, 255)).Absolute().Left(x).Top(10)
 		})
 	}, h)
 	frame()
@@ -197,8 +201,8 @@ func TestTransformedFramesStayOnGPU(t *testing.T) {
 	g := &testGPU{}
 	h, s, frame := gpuHost(t, func() (gpuRenderer, error) { return g, nil })
 	active := true
-	h.rt = newRuntime(func(c *Context) {
-		Box(c).Size(30, 20).Translate(10, 10).Rotate(8).Background(RGB(50, 80, 200))
+	h.rt = newRuntime(func(c *context) {
+		coreBox(c).Size(30, 20).Translate(10, 10).Rotate(8).Background(RGB(50, 80, 200))
 		if active {
 			c.AnimationFrame()
 		}
