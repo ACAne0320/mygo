@@ -40,7 +40,8 @@ func (e *node) ContentTransition(t ContentTransition) *node {
 
 // contentRec is what an element's ContentTransition keeps from frame to
 // frame: what it showed (text and its layout, icon, picture) and what it
-// showed before, which goes as k goes from 0 to 1.
+// showed before, which goes as k goes from 0 to 1; frame is the last
+// painting (engine.paints) that painted it.
 type contentRec struct {
 	frame         uint64
 	text, oldText string
@@ -60,17 +61,17 @@ func (p *Painter) contentStep(e *node, x, y float32, color Color) (*contentRec, 
 	rt := p.rt
 	st := e.st
 	r := st.crec
-	if r == nil || r.frame+1 < rt.frame {
+	if r == nil || r.frame+1 < rt.paints {
 		// Not painted in the frame before: it shows at once.
 		r = &contentRec{}
 		st.crec = r
-		r.frame, r.text, r.tl, r.svg, r.image = rt.frame, e.text, e.tl, e.svg, e.image
+		r.frame, r.text, r.tl, r.svg, r.image = rt.paints, e.text, e.tl, e.svg, e.image
 		r.k = channel{value: 1, target: 1, at: rt.c.now}
 		return r, 1, false
 	}
 	now := rt.c.now
-	if r.frame != rt.frame {
-		r.frame = rt.frame
+	if r.frame != rt.paints {
+		r.frame = rt.paints
 		changed := false
 		switch e.kind {
 		case kindText:
@@ -165,9 +166,13 @@ func (p *Painter) contentText(e *node, ox, oy float32, ts textStyle, sp *spanPai
 	}
 	// What stays: the start, and the end, sliding to where it goes.
 	p.opacity = saved
-	band(ox-far, ox+curPre, func() { p.textLayout(cur, ox, oy, ts.color, ts, nil) })
+	if pre > 0 {
+		band(ox-far, ox+curPre, func() { p.textLayout(cur, ox, oy, ts.color, ts, nil) })
+	}
 	dx := lerp(oldSuf-curSuf, 0, k)
-	band(ox+curSuf+dx, ox+far, func() { p.textLayout(cur, ox+dx, oy, ts.color, ts, nil) })
+	if suf > 0 {
+		band(ox+curSuf+dx, ox+far, func() { p.textLayout(cur, ox+dx, oy, ts.color, ts, nil) })
+	}
 	// What changes: the old going, the new coming.
 	p.opacity = saved * (1 - k)
 	band(ox+oldPre, ox+oldSuf, func() { p.textLayout(old, ox, oy-dir*h*0.6*k, r.oldColor, ts, nil) })

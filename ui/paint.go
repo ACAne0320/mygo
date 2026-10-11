@@ -45,6 +45,7 @@ type opaqueBox struct {
 const continuousCorners = runtime.GOOS == "darwin"
 
 func (rt *engine) paint(root *node, w, h, scale float32) {
+	rt.paints++
 	s := &rt.scene
 	// The root paints the theme's background: frames start transparent, so
 	// that a transparent root shows what is behind the content, such as a
@@ -140,6 +141,9 @@ func (p *Painter) element(e *node) {
 	}
 	if e.opacitySet {
 		p.opacity *= e.opacity
+	}
+	if e.poseFade > 0 {
+		p.opacity *= 1 - e.poseFade
 	}
 	if p.opacity <= 0.001 {
 		p.opacity = saved

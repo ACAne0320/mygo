@@ -554,6 +554,7 @@ type state struct {
 	motions      map[any]*channel
 	colorMotions map[any]*colorMotion
 	crec         *contentRec
+	pose         *poseRec
 	sequences    map[any]*sequence
 	shortcuts    []shortcut
 	delivered    []shortcut

@@ -120,3 +120,26 @@ func TestIconContentTransition(t *testing.T) {
 		t.Errorf("replaced, %d pictures, %d scaled", n, scaled)
 	}
 }
+
+func TestContentTransitionOnlyPaints(t *testing.T) {
+	value := "1"
+	tt := newRepaintTester(func(c *context) {
+		coreText(c, value).ContentTransition(ContentTransition{Numeric: true, Animation: &Animation{Duration: 100 * time.Millisecond, Ease: Linear}})
+	})
+	value = "2"
+	tt.rt.requestFrame()
+	if built, more := tt.frame(0); !built || !more {
+		t.Fatalf("the change: built %v, more %v", built, more)
+	}
+	before := tt.h.last.Glyphs[0].Color.A
+	built, more := tt.frame(50 * time.Millisecond)
+	if built || !more {
+		t.Fatalf("rolling: built %v, more %v", built, more)
+	}
+	if after := tt.h.last.Glyphs[0].Color.A; after == before {
+		t.Error("repainted, the text did not move on")
+	}
+	if _, more := tt.frame(100 * time.Millisecond); more {
+		t.Error("over, it asks for more frames")
+	}
+}

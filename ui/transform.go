@@ -73,7 +73,9 @@ func finiteTransform(v ...float32) {
 }
 
 func (e *node) transformAt(x, y float32) scene.Affine {
-	if !e.transform.m.Set {
+	// Its pose (AnimatePose) acts after its own transform.
+	m := e.poseM.Mul(e.transform.m)
+	if !m.Set {
 		return scene.Affine{}
 	}
 	ox, oy := float32(0.5), float32(0.5)
@@ -81,7 +83,7 @@ func (e *node) transformAt(x, y float32) scene.Affine {
 		ox, oy = e.originX, e.originY
 	}
 	x, y = x+ox*e.w, y+oy*e.h
-	return scene.Translation(x, y).Mul(e.transform.m).Mul(scene.Translation(-x, -y))
+	return scene.Translation(x, y).Mul(m).Mul(scene.Translation(-x, -y))
 }
 
 func (e *node) visualRect(r Rect) Rect { return transformRect(e.world, r) }

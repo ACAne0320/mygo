@@ -90,14 +90,18 @@ func (e *node) Transition(t ElementTransition) *node {
 }
 
 // Transitioning reports whether the element's Transition was moving it,
-// or changing its colors, in the frame before: false once it is where the
-// layout puts it.
+// or changing its colors, or its pose (AnimatePose) was moving it, in the
+// frame before: false once it is where it goes.
 func (e *node) Transitioning() bool {
 	if !e.hasState() {
 		return false
 	}
+	frame := e.c.rt.frame
+	if p := e.st.pose; p != nil && p.frame+1 >= frame && p.moving() {
+		return true
+	}
 	r := e.st.trec
-	return r != nil && r.built+1 >= e.c.rt.frame && (r.moving != 0 || r.colorMoving || r.matching)
+	return r != nil && r.built+1 >= frame && (r.moving != 0 || r.colorMoving || r.matching)
 }
 
 // transitionUse is a call of Transition in the frame being built.
@@ -694,6 +698,7 @@ func ghostOf(e *node) *node {
 	g.activeDescendant, g.nameFrom, g.field, g.form = nil, nil, nil, nil
 	g.followX, g.colFit, g.gridFit = nil, nil, nil
 	g.inputFn, g.ghosts = nil, false
+	g.poseSet = false // it keeps the pose it had
 	g.tl, g.nmeasure, g.leafOK = nil, 0, false
 	g.flags = g.flags&^(flagModal|flagPage|flagFocusTarget) | flagInert
 	for c := e.first; c != nil; c = c.next {

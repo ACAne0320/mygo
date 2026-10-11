@@ -156,6 +156,12 @@ type engine struct {
 	matched map[any]*matchRec
 	// instantFrame is the frame that DisableAnimations shows at once.
 	instantFrame uint64
+	// paints counts the frames painted, those painting the last frame's
+	// elements again included.
+	paints uint64
+	// posed are the elements of the last frame built with a pose
+	// (AnimatePose), parents first.
+	posed        []*node
 	exitsBuilt   bool
 	laidW, laidH float32
 	byID         map[uint64]*node
@@ -568,6 +574,7 @@ func (rt *engine) repaintFrame(w, h, scale float32) {
 	rt.text.BeginFrame()
 	rt.repainting, rt.repaintAt = false, time.Time{}
 	root := rt.c.root
+	rt.repose()
 	rt.paint(root, w, h, scale)
 	for try := 0; try < 2 && rt.text.Full(); try++ {
 		rt.text.MakeRoom()
@@ -797,6 +804,8 @@ func (rt *engine) endFrame() {
 // boxes, the hit list in paint order, the focus order.
 func (rt *engine) commit(root *node, w, h float32) {
 	rt.hits = rt.hits[:0]
+	clear(rt.posed)
+	rt.posed = rt.posed[:0]
 	clear(rt.webPlaces)
 	rt.webPlaces = rt.webPlaces[:0]
 	rt.focusOrder, rt.focusScopes = rt.focusOrder[:0], rt.focusScopes[:0]
@@ -824,6 +833,9 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	s.page = rt.commitPage
 	if e.flags&flagPage != 0 {
 		rt.commitPage = e.id
+	}
+	if e.poseSet {
+		rt.samplePose(e)
 	}
 	e.world = e.transformAt(e.x, e.y)
 	if e.parent != nil && e != e.c.overlay {

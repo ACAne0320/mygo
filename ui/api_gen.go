@@ -2243,6 +2243,26 @@ func (_handle Element) AnimateColor(key any, target Color, a Animation) Color {
 	return _node.AnimateColor(key, target, a)
 }
 
+// AnimatePose moves the element to p as a says, after its own transform
+// (Transform), and fades it, and returns the element. The element keeps
+// going in frames that only paint, without building the view, as Core
+// Animation and the Web Animations API run transforms and opacity: the
+// cheapest motion there is, which a view large or slow to build keeps
+// smooth. The pointer, carets and overlays follow it as they follow
+// transforms. It starts at the first pose. While the desktop asks for less
+// motion, it moves at once, and only fades smoothly.
+//
+//	card.AnimatePose(ui.Pose{Y: lift, Scale: 1.02}, ui.Snappy)
+func (_handle Element) AnimatePose(p Pose, a Animation) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.AnimatePose(p, a))
+}
+
 // AnimateTo returns a value that goes to target as a says, and keeps
 // frames coming while it moves; key tells apart the animated values of
 // the element, which Animate, AnimateWith and Spring share. The value
@@ -4675,8 +4695,8 @@ func (_handle Element) Transition(t ElementTransition) Element {
 }
 
 // Transitioning reports whether the element's Transition was moving it,
-// or changing its colors, in the frame before: false once it is where the
-// layout puts it.
+// or changing its colors, or its pose (AnimatePose) was moving it, in the
+// frame before: false once it is where it goes.
 func (_handle Element) Transitioning() bool {
 	_node := _handle.node()
 	if _node == nil {

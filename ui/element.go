@@ -248,6 +248,13 @@ type node struct {
 	// content is how its content changes (ContentTransition), when set.
 	content    ContentTransition
 	contentSet bool
+	// pose is where AnimatePose moves it, as poseAnim says, when poseSet;
+	// poseM and poseFade are where it shows now.
+	pose     Pose
+	poseAnim Animation
+	poseSet  bool
+	poseM    scene.Affine
+	poseFade float32
 
 	// Painting.
 	bg           Color
