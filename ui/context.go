@@ -357,6 +357,18 @@ func (c *context) Invalidate() { c.rt.host.invalidate() }
 // Painter.AnimationFrame instead, whose frames do not build the view.
 func (c *context) AnimationFrame() { c.rt.animating = true }
 
+// DisableAnimations makes the values that animate in this frame
+// (AnimateTo, Animate, Spring), the element transitions and the pages of
+// routers go to their targets at once, as SwiftUI's disablesAnimations:
+// for a change that should not show as motion, as restoring a window's
+// state or jumping to a search result. Call it before building what
+// changes.
+func (c *context) DisableAnimations() { c.rt.instantFrame = c.rt.frame }
+
+// instant reports whether this frame shows changes at once
+// (DisableAnimations).
+func (rt *engine) instant() bool { return rt.instantFrame == rt.frame && rt.frame != 0 }
+
 // After asks for another frame after d, for something that changes with
 // time, such as a clock.
 func (c *context) After(d time.Duration) { c.rt.scheduleAt(c.now.Add(d)) }
@@ -540,6 +552,7 @@ type state struct {
 	locals       map[any]any
 	anims        map[any]*anim
 	motions      map[any]*channel
+	colorMotions map[any]*colorMotion
 	sequences    map[any]*sequence
 	shortcuts    []shortcut
 	delivered    []shortcut

@@ -622,7 +622,7 @@ func (r *Router) show(c *context, box *node, v *routeView, parent *Route, cur *r
 		v.focusing, v.announcing = false, true
 	}
 	v.leaving, v.dir, v.start = nil, 0, c.now
-	if r.Transition == TransitionNone {
+	if r.Transition == TransitionNone || rt.instant() {
 		return
 	}
 	v.leaving = old

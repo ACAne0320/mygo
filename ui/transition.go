@@ -342,7 +342,7 @@ func collapseAxis(m *Motion, parent *node) uint8 {
 func (rt *engine) animateLayout(root *node, w, h float32) {
 	c := root.c
 	// Changes that resizing the window makes do not animate.
-	resized := w != rt.laidW || h != rt.laidH
+	resized := w != rt.laidW || h != rt.laidH || rt.instant()
 	rt.laidW, rt.laidH = w, h
 	uses := c.transitions
 	rt.exitsBuilt = false
@@ -438,7 +438,7 @@ func (rt *engine) animateLayout(root *node, w, h float32) {
 		r.shown = shown
 		r.apply(e, shown)
 	}
-	rt.animateExits(root, now, still)
+	rt.animateExits(root, now, still, resized)
 }
 
 // matchRec is where the element of a Match showed in a frame, in the
@@ -469,7 +469,7 @@ func (rt *engine) animateMatches() {
 		box := Rect{e.x, e.y, e.w, e.h}
 		rec := rt.matched[m]
 		switch {
-		case still:
+		case still || rt.instant():
 			r.matching = false
 		case r.fresh && rec != nil && rec.id != e.id && rec.frame+1 == rt.frame:
 			from := [4]float32{rec.box.X, rec.box.Y, rec.box.W, rec.box.H}
@@ -596,13 +596,13 @@ func (s tbox) turn() (Transform, bool) {
 // animateExits moves the copies of the elements gone with an Exit, under
 // their parents, and copies those that just went, from the frame before,
 // which the engine kept for them.
-func (rt *engine) animateExits(root *node, now time.Time, still bool) {
+func (rt *engine) animateExits(root *node, now time.Time, still, instant bool) {
 	var byID map[uint64]*node
 	for id, r := range rt.trans {
 		if r.built == rt.frame {
 			continue
 		}
-		if r.ghost == nil && (r.t.Exit == nil || still && !r.t.Exit.fades() || r.laid+1 != rt.frame) {
+		if r.ghost == nil && (r.t.Exit == nil || still && !r.t.Exit.fades() || instant && rt.instant() || r.laid+1 != rt.frame) {
 			delete(rt.trans, id)
 			continue
 		}
@@ -717,6 +717,8 @@ func (rt *engine) animateColors(e *node, r *transition) {
 		switch {
 		case !r.colorSet || r.colorFrame+1 != rt.frame:
 			// Not painted in the frame before: its colors show at once.
+			r.colorMoving = false
+		case target != r.colorTarget && rt.instant():
 			r.colorMoving = false
 		case target != r.colorTarget:
 			r.colorFrom, r.colorMoving = r.colorShown, true

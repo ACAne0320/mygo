@@ -153,7 +153,9 @@ type engine struct {
 	// byID maps a frame's elements, for the copies going.
 	trans map[uint64]*transition
 	// matched is where the elements of a Transition's Match showed.
-	matched      map[any]*matchRec
+	matched map[any]*matchRec
+	// instantFrame is the frame that DisableAnimations shows at once.
+	instantFrame uint64
 	exitsBuilt   bool
 	laidW, laidH float32
 	byID         map[uint64]*node

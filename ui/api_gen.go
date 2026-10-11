@@ -277,6 +277,20 @@ func (_handle *Context) CloseToast(id string) {
 	_ctx.CloseToast(id)
 }
 
+// DisableAnimations makes the values that animate in this frame
+// (AnimateTo, Animate, Spring), the element transitions and the pages of
+// routers go to their targets at once, as SwiftUI's disablesAnimations:
+// for a change that should not show as motion, as restoring a window's
+// state or jumping to a search result. Call it before building what
+// changes.
+func (_handle *Context) DisableAnimations() {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.DisableAnimations()
+}
+
 // MeasureText returns the size spans of text take as Painter.RichText draws
 // them, wrapping lines at width DIPs (none for 0), to lay out what depends
 // on it while building.
@@ -2211,6 +2225,22 @@ func (_handle Element) Animate(key any, target float32, d time.Duration) float32
 	_ctx := _node.c
 	_ = _ctx
 	return _node.Animate(key, target, d)
+}
+
+// AnimateColor returns a color that goes to target as a says, mixed with
+// premultiplied alpha as transitions mix colors, so that a color fading
+// from transparent keeps its hue; key tells apart the element's animated
+// colors. It starts at the first target. As changing colors moves
+// nothing, colors still change smoothly while the desktop asks for less
+// motion; DisableAnimations shows them at once.
+func (_handle Element) AnimateColor(key any, target Color, a Animation) Color {
+	_node := _handle.node()
+	if _node == nil {
+		return *new(Color)
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.AnimateColor(key, target, a)
 }
 
 // AnimateTo returns a value that goes to target as a says, and keeps

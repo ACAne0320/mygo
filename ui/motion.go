@@ -299,7 +299,7 @@ func (e *node) AnimateTo(key any, target float32, a Animation) float32 {
 	now := e.c.now
 	moving := ch.moving || ch.pending
 	ch.advance(now)
-	if rt.preferences().ReduceMotion {
+	if rt.preferences().ReduceMotion || rt.instant() {
 		if ch.moving || ch.pending || ch.value != to {
 			ch.rested = rt.frame
 		}
@@ -390,6 +390,9 @@ func (e *node) Settled(key any) bool {
 	if ch := e.st.motions[key]; ch != nil {
 		return !ch.moving && !ch.pending
 	}
+	if m := e.st.colorMotions[key]; m != nil {
+		return !m.k.moving && !m.k.pending
+	}
 	if s := e.st.sequences[key]; s != nil {
 		return s.done
 	}
@@ -407,6 +410,9 @@ func (e *node) Arrived(key any) bool {
 	if ch := e.st.motions[key]; ch != nil {
 		return ch.rested == frame
 	}
+	if m := e.st.colorMotions[key]; m != nil {
+		return m.k.rested == frame
+	}
 	if s := e.st.sequences[key]; s != nil {
 		return s.rested == frame
 	}
@@ -422,6 +428,92 @@ func (e *node) InView() bool {
 	}
 	s := e.st
 	return s.seen+1 >= e.c.rt.frame && s.vw > 0 && s.vh > 0
+}
+
+// colorMotion is a color that AnimateColor moves from from to to, k of
+// the way.
+type colorMotion struct {
+	from, to, shown Color
+	k               channel
+}
+
+// AnimateColor returns a color that goes to target as a says, mixed with
+// premultiplied alpha as transitions mix colors, so that a color fading
+// from transparent keeps its hue; key tells apart the element's animated
+// colors. It starts at the first target. As changing colors moves
+// nothing, colors still change smoothly while the desktop asks for less
+// motion; DisableAnimations shows them at once.
+func (e *node) AnimateColor(key any, target Color, a Animation) Color {
+	if a.Duration < 0 || a.Delay < 0 {
+		panic("ui: animation durations must not be negative")
+	}
+	if a.Duration == 0 {
+		a.Spring.physics()
+	}
+	if !e.hasState() {
+		return target
+	}
+	st, rt, now := e.st, e.c.rt, e.c.now
+	if st.colorMotions == nil {
+		st.colorMotions = map[any]*colorMotion{}
+	}
+	m := st.colorMotions[key]
+	if m == nil {
+		st.colorMotions[key] = &colorMotion{from: target, to: target, shown: target, k: channel{value: 1, target: 1, at: now}}
+		return target
+	}
+	moving := m.k.moving || m.k.pending
+	m.k.advance(now)
+	switch {
+	case target == m.to:
+	case rt.instant():
+		m.k = channel{value: 1, target: 1, at: now}
+	default:
+		m.from = m.shown
+		m.k = channel{at: now}
+		headFor(&m.k, 1, a, now)
+	}
+	m.to = target
+	if m.k.moving || m.k.pending {
+		m.shown = mixPremultiplied(m.from, target, max(0, min(float32(m.k.value), 1)))
+		e.c.AnimationFrame()
+	} else {
+		m.shown = target
+		if moving {
+			m.k.rested = rt.frame
+		}
+	}
+	return m.shown
+}
+
+// Rubberband returns value held within lo and hi as iOS holds content
+// dragged past its edges: beyond them, it goes less and less far, as on a
+// rubber band, the less the larger dimension is (the size of what is
+// dragged, along the drag).
+func Rubberband(value, lo, hi, dimension float32) float32 {
+	band := func(over float32) float32 {
+		if dimension <= 0 {
+			return 0
+		}
+		const c = 0.55
+		return (1 - 1/(over*c/dimension+1)) * dimension
+	}
+	switch {
+	case value < lo:
+		return lo - band(lo-value)
+	case value > hi:
+		return hi + band(value-hi)
+	}
+	return value
+}
+
+// Project returns where a value going at velocity, in its units per
+// second, comes to rest as iOS's scroll views slow down (their normal
+// deceleration rate): where a fling would carry it, to choose the
+// target a spring takes it to (SpringOptions.Velocity).
+func Project(value, velocity float32) float32 {
+	const rate = 0.998 // kept of the velocity each millisecond
+	return value + velocity/1000*rate/(1-rate)
 }
 
 // Keyframe is a value at At since a sequence starts. The first At must be
@@ -448,8 +540,9 @@ type KeyframeOptions struct {
 	Repeat    int
 	Alternate bool
 	// Delay is how long the sequence holds its first value before it
-	// plays.
-	Delay time.Duration
+	// plays, and RepeatDelay how long it holds where it got to before it
+	// plays again.
+	Delay, RepeatDelay time.Duration
 }
 
 // Keyframes plays a sequence, holding its last value when done. It starts
@@ -474,7 +567,7 @@ func (e *node) Keyframes(key any, frames []Keyframe, options ...KeyframeOptions)
 	if len(options) > 0 {
 		o = options[0]
 	}
-	if o.Repeat < RepeatForever || o.Delay < 0 {
+	if o.Repeat < RepeatForever || o.Delay < 0 || o.RepeatDelay < 0 {
 		panic("ui: keyframe Repeat must be RepeatForever or nonnegative, and Delay nonnegative")
 	}
 	if !e.hasState() {
@@ -546,11 +639,12 @@ func (s *sequence) sample(now time.Time) (float32, bool) {
 	if elapsed < 0 {
 		return s.from, false // delayed
 	}
-	iteration := int64(elapsed / d)
-	if n := s.plays(); n != 0 && iteration >= n {
+	period := d + s.options.RepeatDelay
+	iteration := int64(elapsed / period)
+	if n := s.plays(); n != 0 && (iteration >= n || iteration == n-1 && elapsed%period >= d) {
 		return s.final(), true
 	}
-	at := elapsed % d
+	at := min(elapsed%period, d)
 	if s.options.Alternate && iteration%2 != 0 {
 		at = d - at
 	}

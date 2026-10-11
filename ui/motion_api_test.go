@@ -328,3 +328,104 @@ func TestInView(t *testing.T) {
 		t.Fatalf("at the bottom, the top is in view %v, the bottom %v", topIn, bottomIn)
 	}
 }
+
+func TestDisableAnimations(t *testing.T) {
+	target, instant := float32(0), false
+	show := true
+	var value float32
+	tt, now := clockTester(func(c *context) {
+		if instant {
+			c.DisableAnimations()
+		}
+		e := coreBox(c)
+		value = e.AnimateTo("x", target, Smooth)
+		coreBox(c).Size(100, 100).Children(func() {
+			coreBox(c).Key("moving").Size(10, 10).Absolute().Left(target).Transition(ElementTransition{})
+			if show {
+				coreBox(c).Key("going").Size(10, 10).Transition(ElementTransition{Exit: &Motion{}})
+			}
+		})
+	}, 200, 200)
+	target, instant, show = 50, true, false
+	tt.Frame()
+	if value != 50 || tt.rt.animating {
+		t.Fatalf("without animations, the value is %v", value)
+	}
+	for g := tt.rt.c.root.first; g != nil; g = g.next {
+		for e := g.first; e != nil; e = e.next {
+			if e.leaving != 0 {
+				t.Error("without animations, a copy leaves")
+			} else if e.x != 50 {
+				t.Errorf("without animations, the box is at %v", e.x)
+			}
+		}
+	}
+	instant, target = false, 0
+	*now = now.Add(10 * time.Millisecond)
+	tt.Frame()
+	if value == 0 {
+		t.Error("with animations again, the value jumped")
+	}
+}
+
+func TestAnimateColor(t *testing.T) {
+	target := RGBA(255, 0, 0, 0)
+	var shown Color
+	var settled bool
+	tt, now := motionTester(func(c *context) {
+		e := coreBox(c)
+		shown, settled = e.AnimateColor("bg", target, Animation{Duration: 100 * time.Millisecond, Ease: Linear}), e.Settled("bg")
+	})
+	target = RGB(0, 0, 255)
+	tt.Frame()
+	*now = now.Add(50 * time.Millisecond)
+	tt.Frame()
+	// From transparent red, the blue does not go through red.
+	if shown.R != 0 || shown.B != 255 || shown.A < 120 || shown.A > 135 || settled {
+		t.Errorf("halfway, the color is %+v", shown)
+	}
+	tt.SetPreferences(Preferences{ReduceMotion: true})
+	target = RGB(0, 255, 0)
+	tt.Frame()
+	*now = now.Add(50 * time.Millisecond)
+	tt.Frame()
+	if shown.G == 255 || shown.G == 0 {
+		t.Errorf("without motion, colors still change smoothly: %+v", shown)
+	}
+	*now = now.Add(time.Second)
+	tt.Frame()
+	if shown != target || !settled {
+		t.Errorf("over, the color is %+v", shown)
+	}
+}
+
+func TestRubberbandAndProject(t *testing.T) {
+	if v := Rubberband(50, 0, 100, 200); v != 50 {
+		t.Errorf("within, %v", v)
+	}
+	over, under := Rubberband(150, 0, 100, 200), Rubberband(-50, 0, 100, 200)
+	if over <= 100 || over >= 150 || over-100 != -under {
+		t.Errorf("past either end, %v and %v", over, under)
+	}
+	if far := Rubberband(1e6, 0, 100, 200); far >= 300 {
+		t.Errorf("however far it is dragged, it stays within its dimension: %v", far)
+	}
+	if v := Project(0, 1000); v < 498 || v > 500 {
+		t.Errorf("a fling of 1000/s goes %v", v)
+	}
+}
+
+func TestKeyframeRepeatDelay(t *testing.T) {
+	frames := []Keyframe{{Value: 0}, {At: 100 * time.Millisecond, Value: 100}}
+	s := sequence{frames: frames, options: KeyframeOptions{Repeat: 1, RepeatDelay: 50 * time.Millisecond}, start: time.Unix(0, 0)}
+	at := func(d time.Duration) (float32, bool) { return s.sample(s.start.Add(d)) }
+	if v, _ := at(120 * time.Millisecond); v != 100 {
+		t.Errorf("between plays, it holds %v", v)
+	}
+	if v, _ := at(200 * time.Millisecond); v != 50 {
+		t.Errorf("playing again, %v", v)
+	}
+	if v, done := at(250 * time.Millisecond); v != 100 || !done {
+		t.Errorf("over, %v %v", v, done)
+	}
+}
