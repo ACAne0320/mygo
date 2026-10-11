@@ -212,6 +212,9 @@ card.Opacity(card.AnimateTo("shown", shown, ui.Smooth))
 header.Opacity(1 - min(app.scroll.Y/80, 1)) // fades as the page scrolls
 ```
 
+`ScrollState.ScrollTo(x, y, animation)` scrolls a container smoothly (see
+[Scrolling](scroll.md)).
+
 ## Content that changes
 
 `ContentTransition` animates an element's content as it changes: the text
