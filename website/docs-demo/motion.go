@@ -49,6 +49,32 @@ func init() {
 		status(c, "Drag and let go, or click")
 	})
 
+	// A card turning over in 3D.
+	flipped := false
+	demo("transforms", func(c *ui.Context) {
+		t := c.Theme()
+		stage := ui.Box(c).Key("flip").Size(220, 130)
+		turn := float32(0)
+		if flipped {
+			turn = 180
+		}
+		turn = stage.AnimateTo("turn", turn, ui.Animation{Spring: ui.SpringOptions{Duration: 600 * time.Millisecond, Bounce: 0.15}})
+		stage.Children(func() {
+			front := ui.Column(c).Key("front").Absolute().Fill().Center().Gap(4).Radius(14).Background(t.Surface).Border(1, t.Border).Cursor(ui.CursorPointer)
+			front.RotateY(turn).Perspective(800).BackfaceHidden().Children(func() {
+				ui.Text(c, "Front").Bold()
+			})
+			back := ui.Column(c).Key("back").Absolute().Fill().Center().Radius(14).Background(t.Accent).Cursor(ui.CursorPointer)
+			back.RotateY(turn + 180).Perspective(800).BackfaceHidden().Children(func() {
+				ui.Text(c, "Back").Bold().TextColor(t.AccentText)
+			})
+			if front.Clicked() || back.Clicked() {
+				flipped = !flipped
+			}
+		})
+		status(c, "Click the card")
+	})
+
 	// Tiles opening into a detail view from where they were.
 	open := 0
 	colors := []ui.Color{ui.Hex("#2563eb"), ui.Hex("#16a34a"), ui.Hex("#d97706")}

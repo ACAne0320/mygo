@@ -56,6 +56,36 @@ spring taking over a curve keeps the curve's velocity.
 `ui.EaseInOut`, `ui.Bounce(e)`, CSS's `ui.CubicBezier(x1, y1, x2, y2)`, or
 any `func(t float32) float32`.
 
+`AnimateColor(key, target, a)` animates a color the same way, mixed with
+premultiplied alpha, so that a color fading in from transparent keeps its
+hue:
+
+```go
+row.Background(row.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
+```
+
+## Poses that only paint
+
+The values above are read by the view, so every frame that moves runs it.
+`AnimatePose` moves an element instead: it translates, scales, turns and
+fades it, after its own transform, and the frames that move it only paint,
+without running the view, as Core Animation and the Web Animations API run
+transforms and opacity. It is the cheapest motion there is, which keeps a
+large view smooth:
+
+```go
+lift := ui.Pose{}
+if card.Hovered() {
+	lift = ui.Pose{Y: -4, Scale: 1.02}
+}
+card.AnimatePose(lift, ui.Snappy)
+```
+
+A `Pose` moves by `X` and `Y`, scales by `Scale` (0 keeps the size),
+turns by `Rotate` degrees, and fades by `Fade`, from 0, opaque, to 1, gone.
+The pointer, carets and overlays follow the element as it moves, and
+`Transitioning()` reports whether its pose was moving.
+
 ## Delays and staggering
 
 `Delay` keeps the value going as it was for a while after its target
@@ -103,7 +133,21 @@ card.Translate(x, 0)
 
 `DragVelocity` is the pointer's velocity while it presses, in DIPs per
 second along the element's axes, zero once it rests a moment. `Velocity(key)`
-is the velocity of an animated value.
+is the velocity of an animated value. A click, which does not move, ends no
+drag.
+
+`ui.Project(value, velocity)` is where a fling would carry a value as
+iOS's scroll views slow down, to choose where it lands, as a page of a
+pager. `ui.Rubberband(value, lo, hi, dimension)` holds a value dragged past
+lo or hi as iOS holds content pulled past its edges, going less and less
+far:
+
+```go
+if _, dy, ok := sheet.Dragged(); ok {
+	app.y += dy
+	y = sheet.Jump("y", ui.Rubberband(app.y, 0, 400, 600))
+}
+```
 
 ## When it is done
 
@@ -117,6 +161,14 @@ if toast.Arrived("fade") {
 	app.dismiss(toast)
 }
 ```
+
+## Without animation
+
+`c.DisableAnimations()` makes the values, transitions, poses and router
+pages of the frame go to their targets at once, as SwiftUI's
+disablesAnimations: for a change that should not show as motion, as
+restoring a window's state or jumping to a search result. Call it before
+building what changes.
 
 ## Keyframes
 
@@ -139,7 +191,8 @@ play the sequence again, or a changed one: interrupted, it starts from the
 value shown rather than jumping to its first, the first time through.
 `Repeat` is how many more times it plays after the first, `RepeatForever`
 for as long as it is built, with `Alternate` playing every other time
-backward; `Delay` holds the first value for a while before it plays.
+backward; `Delay` holds the first value for a while before it plays, and
+`RepeatDelay` the value it got to between plays.
 
 ## Scrolling
 
@@ -159,6 +212,24 @@ card.Opacity(card.AnimateTo("shown", shown, ui.Smooth))
 header.Opacity(1 - min(app.scroll.Y/80, 1)) // fades as the page scrolls
 ```
 
+## Content that changes
+
+`ContentTransition` animates an element's content as it changes: the text
+of a `Text`, the icon of an `Icon`, the picture of an `Image`. By default
+the old content fades out as the new fades in, and an icon shrinks away as
+the new one grows in. `Numeric` rolls the characters of a line of text that
+change, as a counter's digits, those that stay staying: up, or with `Down`
+down, as SwiftUI's numericText:
+
+```go
+ui.Text(c, strconv.Itoa(app.count)).FontSize(32).Bold().
+	ContentTransition(ui.ContentTransition{Numeric: true, Down: app.decreased})
+ui.Icon(c, playOrPause).ContentTransition(ui.ContentTransition{})
+```
+
+Content transitions run in frames that only paint. While the desktop asks
+for less motion, content fades without moving.
+
 ## Loops and your own motion
 
 `Loop` returns the progress of an animation that starts over every period,
@@ -169,11 +240,13 @@ in every frame that moves.
 ## Less motion and frames
 
 When the desktop asks for less motion (`c.Preferences().ReduceMotion`),
-values go to their targets at once and sequences end at their last value.
-`Loop` goes on, as the system's spinners do. [Transitions](transitions.md)
-still fade and change colors smoothly, which moves nothing.
+values and poses go to their targets at once and sequences end at their
+last value. What changes without moving still changes smoothly: colors
+(`AnimateColor`), a pose's `Fade`, content fading across, and
+[transitions](transitions.md)' colors and fades. `Loop` goes on, as the
+system's spinners do.
 
 Animations draw frames only while something moves, at the display's rate,
-and none while other windows cover the window. Each frame runs the view, as
-the values are read there; a drawing that moves while the layout stays can
-animate from its `Draw` instead, which repaints without running the view.
+and none while other windows cover the window. Frames moving values the
+view reads run the view; poses, content transitions, and drawings that
+animate from their `Draw` only paint.

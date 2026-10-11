@@ -37,6 +37,22 @@ Draw functions only paint: MyGo may call them more than once a frame.
 `Painter.FocusRing` the ring of the keyboard focus, for widgets that draw
 their own.
 
+`Path.Trim(from, to)` keeps the part of a path's length from `from` to
+`to`, as fractions of it, which draws a path in as `to` animates from 0 to
+1, as SwiftUI's `trim` and Motion's `pathLength`:
+
+```go
+drawn := float32(0)
+if app.done {
+	drawn = 1
+}
+drawn = box.AnimateTo("check", drawn, ui.Smooth)
+box.Draw(func(p *ui.Painter, r ui.Rect) {
+	check := (&ui.Path{}).MoveTo(r.X+4, r.Y+12).LineTo(r.X+10, r.Y+18).LineTo(r.X+20, r.Y+6)
+	p.StrokePath(check.Trim(0, drawn), 2, c.Theme().Accent)
+})
+```
+
 ## Shaping text
 
 Text that a widget lays out itself, as in the cells of a grid, is shaped

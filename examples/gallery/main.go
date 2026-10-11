@@ -81,6 +81,12 @@ type gallery struct {
 	flingRight bool
 	flingStyle int
 	tileOpen   int
+	// The card turned over, the counter, and the task done on the Motion
+	// page.
+	cardFlipped bool
+	counter     int
+	countDown   bool
+	taskDone    bool
 	// The disclosure, the sections of the accordion, and their choices.
 	advanced, verbose, share, news bool
 	sections                       [3]bool
@@ -538,7 +544,7 @@ func (g *gallery) overview(c *ui.Context) {
 		"The view is a Go function of the app's state that runs again after every event.").TextColor(t.TextMuted)
 	ui.Row(c).Gap(16).Wrap().AlignItems(ui.Start).Children(func() {
 		card(c, "Counter", func() {
-			ui.Text(c, fmt.Sprint(g.count)).FontSize(40).Bold()
+			ui.Text(c, fmt.Sprint(g.counter)).FontSize(40).Bold()
 			ui.Row(c).Gap(8).Children(func() {
 				if ui.Button(c, "−").Width(44).Clicked() {
 					g.count--
@@ -1544,6 +1550,70 @@ func (g *gallery) motion(c *ui.Context) {
 						}
 					})
 				})
+			})
+		})
+	})
+
+	ui.Grid(c).Columns(2).Gap(16).Children(func() {
+		card(c, "Cards that turn over", func() {
+			ui.Text(c, "Turned in 3D and seen in perspective, each face hides while it is turned away.").FontSize(12).TextColor(t.TextMuted)
+			stage := ui.Box(c).Key("flip-stage").Height(150).Center()
+			turn := float32(0)
+			if g.cardFlipped {
+				turn = 180
+			}
+			turn = stage.AnimateTo("turn", turn, ui.Animation{Spring: ui.SpringOptions{Duration: 600 * time.Millisecond, Bounce: 0.15}})
+			stage.Children(func() {
+				ui.Box(c).Key("flip-card").Size(200, 120).Children(func() {
+					front := ui.Column(c).Key("front").Absolute().Fill().Center().Gap(4).Radius(14).Background(t.Surface).Border(1, t.Border).Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.12))
+					front.RotateY(turn).Perspective(800).BackfaceHidden().Children(func() {
+						ui.Text(c, "Front").Bold()
+						ui.Text(c, "Click to turn over").FontSize(12).TextColor(t.TextMuted)
+					})
+					back := ui.Column(c).Key("back").Absolute().Fill().Center().Radius(14).Background(t.Accent)
+					back.RotateY(turn + 180).Perspective(800).BackfaceHidden().Children(func() {
+						ui.Text(c, "Back").Bold().TextColor(t.AccentText)
+					})
+					if front.Clicked() || back.Clicked() {
+						g.cardFlipped = !g.cardFlipped
+					}
+				})
+			})
+		})
+		card(c, "Counters, check marks and lifts", func() {
+			ui.Text(c, "Digits roll as they change, a check mark draws itself in, and tiles lift in frames that only paint.").FontSize(12).TextColor(t.TextMuted)
+			ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+				if ui.Button(c, "−").Clicked() {
+					g.counter, g.countDown = g.counter-1, true
+				}
+				ui.Text(c, fmt.Sprint(g.counter)).FontSize(32).Bold().Width(80).TextAlign(ui.Center).
+					ContentTransition(ui.ContentTransition{Numeric: true, Down: g.countDown})
+				if ui.Button(c, "+").Clicked() {
+					g.counter, g.countDown = g.counter+1, false
+				}
+				check := ui.Box(c).Key("check").Size(36, 36).Radius(8).Border(2, t.Border).Cursor(ui.CursorPointer)
+				drawn := float32(0)
+				if g.taskDone {
+					drawn = 1
+				}
+				drawn = check.AnimateTo("drawn", drawn, ui.Smooth)
+				check.Draw(func(p *ui.Painter, r ui.Rect) {
+					mark := (&ui.Path{}).MoveTo(r.X+9, r.Y+19).LineTo(r.X+15, r.Y+25).LineTo(r.X+27, r.Y+11)
+					p.StrokePath(mark.Trim(0, drawn), 3, t.Accent)
+				})
+				if check.Clicked() {
+					g.taskDone = !g.taskDone
+				}
+			})
+			ui.Row(c).Gap(10).Children(func() {
+				for i, col := range motionColors[:4] {
+					tile := ui.Box(c.Key(i)).Size(56, 40).Radius(8).Background(col)
+					lift := ui.Pose{}
+					if tile.Hovered() {
+						lift = ui.Pose{Y: -6, Scale: 1.06}
+					}
+					tile.AnimatePose(lift, ui.Snappy)
+				}
 			})
 		})
 	})

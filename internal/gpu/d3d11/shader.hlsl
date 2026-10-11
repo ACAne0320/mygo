@@ -35,11 +35,10 @@ struct Inst {
 
 struct VSOut {
 	float4 pos : SV_Position;
-	float2 p : PIXEL;
+	float4 pt : PIXEL; // the position in pixels, and the texture coordinates
 	// The frame point times its projective divisor, and the divisor: they
 	// interpolate in perspective to what divides into the frame point.
 	float3 world : WORLD;
-	float2 tex : TEXCOORD0;
 	nointerpolation float4 rect : RECT;
 	nointerpolation float4 radii : RADII;
 	nointerpolation float4 inner : INNER;
@@ -85,9 +84,9 @@ VSOut vs(uint vid : SV_VertexID, Inst i) {
 	h = frameH(i, p);
 	VSOut o;
 	o.pos = float4(h.xy / viewport * float2(2, -2) + h.z * float2(-1, 1), 0, h.z);
-	o.p = p;
+	o.pt.xy = p;
 	o.world = h;
-	o.tex = i.uv.xy + (p - i.rect.xy) / i.rect.zw * (i.uv.zw - i.uv.xy);
+	o.pt.zw = i.uv.xy + (p - i.rect.xy) / i.rect.zw * (i.uv.zw - i.uv.xy);
 	o.rect = i.rect;
 	o.radii = i.radii;
 	o.inner = i.inner;
@@ -207,7 +206,7 @@ float clipCoverage(VSOut i) {
 	if (i.transform1.w < 0.5)
 		return rectCoverage(world, i.clip, i.clipRadii);
 	if (i.transform1.w > 1.5)
-		return localCoverage(i.p, i.clip, float4(0, 0, 0, 0), i.transform0.w, fr) *
+		return localCoverage(i.pt.xy, i.clip, float4(0, 0, 0, 0), i.transform0.w, fr) *
 			   clipTex.Sample(samp, (world - i.clipRadii.xy) / i.clipRadii.zw).a;
 	return clipTex.Sample(samp, (world - i.clip.xy) / i.clip.zw).a;
 }
@@ -375,17 +374,17 @@ PSOut ps(VSOut i) {
 	Frame fr = frameOf(i);
 	float kind = i.params.x;
 	float4 res;
-	float glyphCov = i.transform0.w > 0.5 ? localCoverage(i.p, i.rect, float4(0, 0, 0, 0), 1, fr) : 1;
+	float glyphCov = i.transform0.w > 0.5 ? localCoverage(i.pt.xy, i.rect, float4(0, 0, 0, 0), 1, fr) : 1;
 	if (kind < 0.5) {
-		float outer = localCoverage(i.p, i.rect, i.radii, i.transform0.w, fr);
-		res = paint(i.p, i.params.z, i.rect, i.color, i.color2, i.grad) * outer;
+		float outer = localCoverage(i.pt.xy, i.rect, i.radii, i.transform0.w, fr);
+		res = paint(i.pt.xy, i.params.z, i.rect, i.color, i.color2, i.grad) * outer;
 		float4 bw = i.widths; // top, right, bottom, left
 		if (any(bw > 0)) {
 			float4 ir = float4(i.rect.xy + bw.wx, i.rect.zw - bw.yz - bw.wx);
-			float innerCov = (ir.z > 0 && ir.w > 0) ? localCoverage(i.p, ir, i.inner, i.transform0.w, fr) : 0;
+			float innerCov = (ir.z > 0 && ir.w > 0) ? localCoverage(i.pt.xy, ir, i.inner, i.transform0.w, fr) : 0;
 			float bc = saturate(outer - innerCov);
 			if (i.params.y > 0.5) {
-				bc *= dash(i.p, i.rect, bw);
+				bc *= dash(i.pt.xy, i.rect, bw);
 			}
 			float4 b = premul(i.border) * bc;
 			res = b + res * (1 - b.a);
@@ -396,38 +395,38 @@ PSOut ps(VSOut i) {
 		float hole = 0;
 		if (i.widths.z > 0 && i.widths.w > 0) {
 			float corner = max(max(i.inner.x, i.inner.y), max(i.inner.z, i.inner.w));
-			hole = sigma > 0 ? boxShadow(i.p, i.widths, sigma, corner)
-						  : localCoverage(i.p, i.widths, i.inner, i.transform0.w, fr);
+			hole = sigma > 0 ? boxShadow(i.pt.xy, i.widths, sigma, corner)
+						  : localCoverage(i.pt.xy, i.widths, i.inner, i.transform0.w, fr);
 		}
-		res = premul(i.color) * (localCoverage(i.p, i.rect, i.radii, i.transform0.w, fr) * (1 - hole));
+		res = premul(i.color) * (localCoverage(i.pt.xy, i.rect, i.radii, i.transform0.w, fr) * (1 - hole));
 	} else if (kind < 1.5) {
 		float sigma = i.params.z;
 		float corner = max(max(i.radii.x, i.radii.y), max(i.radii.z, i.radii.w));
-		float s = sigma > 0 ? boxShadow(i.p, i.rect, sigma, corner)
-							: localCoverage(i.p, i.rect, i.radii, i.transform0.w, fr);
+		float s = sigma > 0 ? boxShadow(i.pt.xy, i.rect, sigma, corner)
+							: localCoverage(i.pt.xy, i.rect, i.radii, i.transform0.w, fr);
 		if (i.widths.z > 0 && i.widths.w > 0) {
-			s *= 1 - localCoverage(i.p, i.widths, i.inner, i.transform0.w, fr); // outside the box casting it
+			s *= 1 - localCoverage(i.pt.xy, i.widths, i.inner, i.transform0.w, fr); // outside the box casting it
 		}
 		res = premul(i.color) * s;
 	} else if (kind < 2.5) {
-		float4 c = paint(i.p, i.params.z, i.rect, i.color, i.color2, i.grad);
+		float4 c = paint(i.pt.xy, i.params.z, i.rect, i.color, i.color2, i.grad);
 		res = c *
-			  textCoverage(sampleLocal(maskTex, i.tex, i.widths, i.transform0.w).r, unpremul(c), i.inner.x,
+			  textCoverage(sampleLocal(maskTex, i.pt.zw, i.widths, i.transform0.w).r, unpremul(c), i.inner.x,
 						   i.inner.y, i.radii) *
 			  glyphCov;
 	} else if (kind < 3.5) {
-		res = sampleLocal(colorTex, i.tex, i.widths, i.transform0.w) * i.color.a * glyphCov;
+		res = sampleLocal(colorTex, i.pt.zw, i.widths, i.transform0.w) * i.color.a * glyphCov;
 	} else if (kind < 4.5) {
-		res = sampleLocal(imageTex, i.tex, i.widths, i.transform0.w) *
-			  localCoverage(i.p, i.rect, i.radii, i.transform0.w, fr);
+		res = sampleLocal(imageTex, i.pt.zw, i.widths, i.transform0.w) *
+			  localCoverage(i.pt.xy, i.rect, i.radii, i.transform0.w, fr);
 		if (i.params.y > 0.5) {
 			res.rgb = dot(res.rgb, float3(0.2126, 0.7152, 0.0722));
 		}
 	} else {
-		float4 c = paint(i.p, i.params.z, i.rect, i.color, i.color2, i.grad);
+		float4 c = paint(i.pt.xy, i.params.z, i.rect, i.color, i.color2, i.grad);
 		float3 straight = unpremul(c);
 		if (i.transform0.w > 0.5) {
-			float3 rgb = sampleLocal(colorTex, i.tex, i.widths, 1).rgb;
+			float3 rgb = sampleLocal(colorTex, i.pt.zw, i.widths, 1).rgb;
 			res = c * textCoverage((rgb.r + rgb.g + rgb.b) / 3, straight, i.inner.x, i.inner.y, i.radii) *
 				  glyphCov;
 			PSOut gray;
@@ -435,7 +434,7 @@ PSOut ps(VSOut i) {
 			gray.alpha = gray.color.aaaa;
 			return gray;
 		}
-		float3 a = subpixelCoverage(sampleLocal(colorTex, i.tex, i.widths, i.transform0.w).rgb, straight,
+		float3 a = subpixelCoverage(sampleLocal(colorTex, i.pt.zw, i.widths, i.transform0.w).rgb, straight,
 									i.inner.x, i.inner.y, i.radii);
 		float3 w = a * c.a * clipCoverage(i) * i.params.w;
 		float wa = (w.r + w.g + w.b) / 3;

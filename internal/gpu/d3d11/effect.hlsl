@@ -56,7 +56,7 @@ PSOut effectps(VSOut i) {
 	e.transform1 = i.transform1;
 	e.transform2 = i.transform2;
 	float4 res =
-		effect(i.p, e) * (localCoverage(i.p, i.rect, i.radii, i.transform0.w, fr) * clipCoverage(i) * i.params.w);
+		effect(i.pt.xy, e) * (localCoverage(i.pt.xy, i.rect, i.radii, i.transform0.w, fr) * clipCoverage(i) * i.params.w);
 	PSOut o;
 	o.color = res;
 	o.alpha = res.aaaa;

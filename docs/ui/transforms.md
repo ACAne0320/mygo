@@ -1,5 +1,7 @@
 # Transforms
 
+<!-- preview transforms 200 -->
+
 `Translate`, `Scale`, and `Rotate` change an element and everything inside
 it visually, while layout reserves its original space. They work on boxes,
 text, images, controls, and custom drawings. The pointer follows what is
@@ -34,6 +36,43 @@ previous transform; the convenience methods append to it. Set transforms
 in the view, before the frame is laid out. `Rotate` on an icon keeps its
 existing behavior of rotating the SVG artwork around its center. To rotate
 an icon's whole border box, use `Transform(ui.Rotation(degrees))`.
+
+## Skew and 3D
+
+`Skew(x, y)` slants an element by degrees along each axis, as CSS's
+`skew()`. `RotateX` and `RotateY` turn it in 3D around the horizontal and
+vertical axes through its origin, and `Perspective(distance)` after them
+sees it from that many DIPs in front: the shorter, the deeper; 800 or so
+looks natural. Without `Perspective`, a turned element only looks narrower
+or shorter:
+
+```go
+// A card turning over: its back, turned half a turn more, shows past
+// 90 degrees, and each face hides while it is turned away.
+card := ui.Box(c).Size(160, 100)
+turn := float32(0)
+if app.flipped {
+	turn = 180
+}
+turn = card.AnimateTo("turn", turn, ui.Snappy)
+card.Children(func() {
+	front := ui.Box(c).Background(t.Surface)
+	back := ui.Box(c).Background(t.Accent)
+	front.Absolute().Fill().RotateY(turn).Perspective(800).BackfaceHidden()
+	back.Absolute().Fill().RotateY(turn + 180).Perspective(800).BackfaceHidden()
+})
+```
+
+`Transform` values compose the same way, with `Skewing`, `RotationX`,
+`RotationY` and `Perspective`. Each element flattens what its 3D transform
+makes of it into its parent's plane, as CSS's default `transform-style:
+flat`: a parent turning in 3D turns its children's drawing with it.
+`BackfaceHidden` hides an element, and takes it from the pointer, while
+its own 3D transform turns its back to the viewer.
+
+The pointer, clips, text input and accessibility follow 3D transforms as
+they follow 2D ones, and the renderers draw them in perspective, smooth
+edges included.
 
 ## Coordinates, clips, and overlays
 
