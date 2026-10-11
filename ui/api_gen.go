@@ -2370,6 +2370,23 @@ func (_handle Element) AutoFocus() Element {
 	return wrapElement(_node.AutoFocus())
 }
 
+// BackfaceHidden hides the element, and takes it from the pointer, while
+// its 3D transform turns its back to the viewer, as CSS's
+// backface-visibility: hidden: the two faces of a card turning over, the
+// back turned 180 degrees more than the front, show one at a time.
+//
+//	front.RotateY(turn).Perspective(800).BackfaceHidden()
+//	back.RotateY(turn + 180).Perspective(800).BackfaceHidden()
+func (_handle Element) BackfaceHidden() Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.BackfaceHidden())
+}
+
 // Background fills the element, in place of a gradient.
 func (_handle Element) Background(c Color) Element {
 	_node := _handle.node()
@@ -3992,6 +4009,18 @@ func (_handle Element) Password() Element {
 	return wrapElement(_node.Password())
 }
 
+// Perspective sees the element's transform in 3D from distance DIPs in
+// front of its origin (Perspective).
+func (_handle Element) Perspective(distance float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Perspective(distance))
+}
+
 // Placeholder shows s in an empty text input.
 func (_handle Element) Placeholder(s string) Element {
 	_node := _handle.node()
@@ -4159,6 +4188,36 @@ func (_handle Element) Rotate(degrees float32) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Rotate(degrees))
+}
+
+// RotateX turns the element in 3D around the horizontal axis through its
+// origin, after its existing transform, as RotationX: follow it with
+// Perspective to see it in depth.
+//
+//	card.RotateX(30).Perspective(800)
+func (_handle Element) RotateX(degrees float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.RotateX(degrees))
+}
+
+// RotateY turns the element in 3D around the vertical axis through its
+// origin, after its existing transform, as RotationY: a card turning over
+// shows its back past 90 degrees, mirrored.
+//
+//	card.RotateY(flip * 180).Perspective(800)
+func (_handle Element) RotateY(degrees float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.RotateY(degrees))
 }
 
 // Row lays the children out from left to right.
@@ -4427,6 +4486,18 @@ func (_handle Element) Size(w float32, h float32) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Size(w, h))
+}
+
+// Skew slants the element after its existing transform, around its
+// origin, by x degrees along the horizontal axis and y along the vertical.
+func (_handle Element) Skew(x float32, y float32) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Skew(x, y))
 }
 
 // Spring returns a value following target with a spring, as AnimateTo

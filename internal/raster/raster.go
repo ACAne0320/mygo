@@ -327,7 +327,7 @@ func (r *renderer) clipCoverage(x, y int) float32 {
 			if !c.valid {
 				return 0
 			}
-			cov *= transformedCoverage(&c.shape, c.inverse, px, py)
+			cov *= transformedCoverage(&c.shape, c.transform, c.inverse, px, py)
 		} else if c.round {
 			cov *= coverage(&c.shape, px, py)
 		} else {

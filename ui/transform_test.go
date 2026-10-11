@@ -348,3 +348,88 @@ func TestTransformedViewStaysIdle(t *testing.T) {
 		t.Fatal("static transformed content scheduled work")
 	}
 }
+
+func TestTransformsIn3D(t *testing.T) {
+	turn := float32(40)
+	var card, back *node
+	clicks := 0
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Size(400, 300).Children(func() {
+			card = coreBox(c).Key("card").Absolute().Left(100).Top(100).Size(200, 100).Background(RGB(255, 0, 0)).
+				RotateY(turn).Perspective(400).BackfaceHidden()
+			back = coreBox(c).Key("back").Absolute().Left(100).Top(100).Size(200, 100).Background(RGB(0, 0, 255)).
+				RotateY(turn + 180).Perspective(400).BackfaceHidden()
+			if card.Clicked() {
+				clicks++
+			}
+		})
+	}, 400, 300)
+	b := card.Bounds()
+	// Turned away on its right, the card is narrower, and its right edge
+	// shorter than its left.
+	if b.W >= 200 || b.W < 100 || b.H <= 100 {
+		t.Fatalf("turned, the card shows within %v", b)
+	}
+	lx, ly, ok := card.WindowToLocal(card.LocalToWindow(150, 60))
+	if !ok || math.Abs(float64(lx-150)) > 1e-2 || math.Abs(float64(ly-60)) > 1e-2 {
+		t.Fatalf("there and back, %v, %v", lx, ly)
+	}
+	_, y0 := card.LocalToWindow(0, 0)
+	_, y1 := card.LocalToWindow(200, 0)
+	if y1 <= y0 {
+		t.Errorf("the far edge is not shorter: tops at %v and %v", y0, y1)
+	}
+	// The front shows and takes the pointer; the back, turned away, neither.
+	x, y := card.LocalToWindow(190, 50)
+	if p := tt.Image().RGBAAt(int(x), int(y)); p.R < 200 || p.B > 50 {
+		t.Errorf("the front shows as %v", p)
+	}
+	tt.ClickAt(x, y)
+	if clicks != 1 {
+		t.Errorf("a click on the far side of the front: %d clicks", clicks)
+	}
+	// Past 90 degrees, the back shows instead.
+	turn = 140
+	tt.Frame()
+	x, y = back.LocalToWindow(100, 50)
+	if p := tt.Image().RGBAAt(int(x), int(y)); p.B < 200 || p.R > 50 {
+		t.Errorf("turned over, the back shows as %v", p)
+	}
+	tt.ClickAt(x, y)
+	if clicks != 1 {
+		t.Errorf("turned away, the front took a click")
+	}
+}
+
+func TestSkewAndPerspectiveTransforms(t *testing.T) {
+	m := Skewing(45, 0).flat()
+	if x, y := m.Point(0, 10); math.Abs(float64(x-10)) > 1e-4 || y != 10 {
+		t.Errorf("skewed 45 degrees, (0, 10) goes to %v, %v", x, y)
+	}
+	// Turned about the vertical axis without perspective, it only looks
+	// narrower.
+	if f := RotationY(60).flat(); f.Perspective() || math.Abs(float64(f.A-0.5)) > 1e-6 {
+		t.Errorf("turned flat: %+v", f)
+	}
+	// A turn there and back is nothing.
+	if f := RotationX(30).Then(Perspective(500)).Then(Translation(5, 5)).flat(); !f.Perspective() {
+		t.Error("in perspective, the map is affine")
+	}
+	id := RotationY(25).Then(RotationY(-25)).flat()
+	if id.Set && (math.Abs(float64(id.A-1)) > 1e-5 || math.Abs(float64(id.G)) > 1e-6) {
+		t.Errorf("turned there and back: %+v", id)
+	}
+	if !RotationY(120).facesAway() || RotationY(60).facesAway() || Scaling(-1, 1).facesAway() || RotationX(-100).Then(Perspective(300)).facesAway() == false {
+		t.Error("the faces turned away are not those past 90 degrees")
+	}
+	for _, f := range []func(){func() { Perspective(0) }, func() { Skewing(float32(math.NaN()), 0) }} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("invalid transform accepted")
+				}
+			}()
+			f()
+		}()
+	}
+}

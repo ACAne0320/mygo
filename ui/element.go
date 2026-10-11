@@ -255,6 +255,9 @@ type node struct {
 	poseSet  bool
 	poseM    scene.Affine
 	poseFade float32
+	// backface hides it while its 3D transform turns its back to the
+	// viewer (BackfaceHidden).
+	backface bool
 
 	// Painting.
 	bg           Color

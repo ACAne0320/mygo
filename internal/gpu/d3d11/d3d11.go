@@ -358,8 +358,8 @@ func (r *Renderer) init() error {
 			return fmt.Errorf("d3d11: cannot create the %s shader", s.name)
 		}
 	}
-	names := []string{"RECT", "RADII", "INNER", "COLOR", "COLOR", "COLOR", "GRAD", "UV", "CLIP", "CLIPR", "PARAMS", "TRANSFORM", "TRANSFORM"}
-	indices := []uint32{0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 1}
+	names := []string{"RECT", "RADII", "INNER", "COLOR", "COLOR", "COLOR", "GRAD", "UV", "CLIP", "CLIPR", "PARAMS", "TRANSFORM", "TRANSFORM", "TRANSFORM"}
+	indices := []uint32{0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 1, 2}
 	elems := make([]inputElement, len(names))
 	cstr := make([][]byte, len(names))
 	for i, n := range names {

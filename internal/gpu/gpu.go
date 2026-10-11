@@ -83,7 +83,10 @@ type Instance struct {
 	Params [4]float32
 	// Transform rows map local pixels to the frame. Transform0.w enables
 	// transformed antialiasing, Transform1.w selects a cached clip mask.
-	Transform0, Transform1 [4]float32
+	// Transform2 holds the projective row's g and h, the frame point of
+	// local (x, y) being Transform0's and Transform1's dot products with
+	// (x, y, 1) over g*x + h*y + 1: shaders interpolate in perspective.
+	Transform0, Transform1, Transform2 [4]float32
 }
 
 // InstanceSize is the size of an Instance in bytes.

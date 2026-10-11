@@ -107,7 +107,7 @@ func (rt *engine) deliver(s *state, ev InputEvent) bool {
 	}
 	ev.X, ev.Y = s.local(rt.pointerX, rt.pointerY)
 	if ev.Kind == InputScroll {
-		ev.DX, ev.DY = s.vector(ev.DX, ev.DY)
+		ev.DX, ev.DY = s.vector(rt.pointerX, rt.pointerY, ev.DX, ev.DY)
 	}
 	if !s.input(ev) {
 		return false

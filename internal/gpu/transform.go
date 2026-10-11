@@ -21,10 +21,11 @@ func (b *Builder) prepare(in *Instance, m scene.Affine, c *clip) bool {
 	if _, ok := m.Inverse(); !ok {
 		return false
 	}
-	in.Transform0, in.Transform1 = [4]float32{1, 0, 0, 0}, [4]float32{0, 1, 0, 0}
+	in.Transform0, in.Transform1, in.Transform2 = [4]float32{1, 0, 0, 0}, [4]float32{0, 1, 0, 0}, [4]float32{}
 	if m.Set {
 		in.Transform0 = [4]float32{m.A, m.C, m.X, 1}
 		in.Transform1 = [4]float32{m.B, m.D, m.Y, 0}
+		in.Transform2 = [4]float32{m.G, m.H, 0, 0}
 	}
 	in.Clip, in.ClipRadii = rect(c.rect), c.radii
 	if !c.masked {

@@ -31,7 +31,7 @@ func ClipMask(dst *scene.Image, clips []scene.ClipShape, area image.Rectangle) *
 					cov = 0
 					break
 				}
-				cov *= transformedCoverage(&c.shape, c.inverse, wx, wy)
+				cov *= transformedCoverage(&c.shape, c.transform, c.inverse, wx, wy)
 				if cov == 0 {
 					break
 				}

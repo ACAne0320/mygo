@@ -20,19 +20,24 @@ func Contains(r scene.Rect, radii [4]float32, continuous bool, x, y float32) boo
 	return scene.SDRoundRect(r, s.radii, x, y) <= 0
 }
 
-// transformedCoverage integrates a transformed shape over a device pixel.
-// Interior pixels take one distance test; edges use a grid in device space.
-func transformedCoverage(s *shape, inv scene.Affine, x, y float32) float32 {
+// transformedCoverage integrates a shape that m transforms (inv its
+// inverse) over a device pixel. Interior pixels take one distance test;
+// edges use a grid in device space. What a projective map puts behind the
+// viewer covers nothing.
+func transformedCoverage(s *shape, m, inv scene.Affine, x, y float32) float32 {
 	if !inv.Set {
 		return coverage(s, x, y)
 	}
 	lx, ly := inv.Point(x, y)
+	if m.Perspective() && m.W(lx, ly) <= 0 {
+		return 0
+	}
 	d := scene.SDRoundRect(s.r, s.radii, lx, ly)
 	if s.continuous {
 		d, _ = s.contDist(lx, ly)
 	}
-	rx, ry := inv.Vector(0.5, 0.5)
-	sx, sy := inv.Vector(0.5, -0.5)
+	rx, ry := inv.VectorAt(x, y, 0.5, 0.5)
+	sx, sy := inv.VectorAt(x, y, 0.5, -0.5)
 	reach := max(abs(rx)+abs(ry), abs(sx)+abs(sy)) * 2
 	if d < -reach {
 		return 1
@@ -95,15 +100,18 @@ func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.Bac
 			}
 			wx, wy := float32(x)+0.5, float32(y)+0.5
 			lx, ly := inv.Point(wx, wy)
+			if op.Transform.Perspective() && op.Transform.W(lx, ly) <= 0 {
+				continue // behind the viewer
+			}
 			p := r.dst.Pix[y*r.dst.Stride+4*x:][:4]
 			if inset {
 				// Inside the box, what the hole, blurred, leaves.
 				caster := newShape(op.Cast, scene.Corners(op.Cast, op.CastRadii, op.Continuous))
-				cov := transformedCoverage(&caster, inv, wx, wy)
+				cov := transformedCoverage(&caster, op.Transform, inv, wx, wy)
 				if !op.Rect.Empty() {
 					hole := transformedShadowAt(op, &outer, lx, ly)
 					if op.Blur < 1 {
-						hole = transformedCoverage(&outer, inv, wx, wy)
+						hole = transformedCoverage(&outer, op.Transform, inv, wx, wy)
 					}
 					cov *= 1 - hole
 				}
@@ -113,16 +121,16 @@ func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.Bac
 			if op.Kind == scene.OpShadow {
 				cov := transformedShadowAt(op, &outer, lx, ly)
 				if op.Blur < 1 {
-					cov = transformedCoverage(&outer, inv, wx, wy)
+					cov = transformedCoverage(&outer, op.Transform, inv, wx, wy)
 				}
 				if !op.Cast.Empty() {
 					caster := newShape(op.Cast, scene.Corners(op.Cast, op.CastRadii, op.Continuous))
-					cov *= 1 - transformedCoverage(&caster, inv, wx, wy)
+					cov *= 1 - transformedCoverage(&caster, op.Transform, inv, wx, wy)
 				}
 				blend(p, op.Color.Premul(opacityOf(op.Opacity)), cov*clip)
 				continue
 			}
-			cov := transformedCoverage(&outer, inv, wx, wy)
+			cov := transformedCoverage(&outer, op.Transform, inv, wx, wy)
 			if cov <= 0 {
 				continue
 			}
@@ -134,7 +142,7 @@ func (r *renderer) transformed(op *scene.Op, px scene.EffectPixels, b *scene.Bac
 				if hasBorder {
 					ic := float32(0)
 					if !inner.r.Empty() {
-						ic = transformedCoverage(&inner, inv, wx, wy)
+						ic = transformedCoverage(&inner, op.Transform, inv, wx, wy)
 					}
 					bc := max(cov-ic, 0)
 					if op.Dashed {
@@ -223,7 +231,7 @@ func (r *renderer) transformedGlyphs(op *scene.Op) {
 		for y := y0; y < y1; y++ {
 			for x := x0; x < x1; x++ {
 				wx, wy := float32(x)+0.5, float32(y)+0.5
-				cov := r.clipCoverage(x, y) * transformedCoverage(&shape, inv, wx, wy)
+				cov := r.clipCoverage(x, y) * transformedCoverage(&shape, m, inv, wx, wy)
 				if cov <= 0 {
 					continue
 				}

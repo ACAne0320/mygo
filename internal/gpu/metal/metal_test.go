@@ -40,6 +40,14 @@ func TestDrawsAsTheCPURenderer(t *testing.T) {
 		}
 		gputest.Compare(t, "metal-affine", pix, transformed.Width*4, transformed)
 	}
+	for range 2 {
+		s = gputest.PerspectiveScene()
+		pix, err := r.renderOffscreen(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gputest.Compare(t, "metal-perspective", pix, s.Width*4, s)
+	}
 	s = gputest.ContinuousScene()
 	pix, err := r.renderOffscreen(s)
 	if err != nil {

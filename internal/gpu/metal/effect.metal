@@ -11,11 +11,13 @@ struct Effect {
 	float4 area; // where the backdrop's area starts in the frame, and its size in texels
 	float down;	 // the size of the squares the backdrop averages
 	bool wide;	 // the target keeps colors outside the sRGB gamut, in extended sRGB
-	float4 transform0, transform1;
+	float4 transform0, transform1, transform2;
 };
 
 float2 framePoint(Effect e, float2 q) {
-	return float2(dot(e.transform0.xyz, float3(q, 1.0)), dot(e.transform1.xyz, float3(q, 1.0)));
+	float3 h = float3(dot(e.transform0.xyz, float3(q, 1.0)), dot(e.transform1.xyz, float3(q, 1.0)),
+					  dot(float3(e.transform2.xy, 1.0), float3(q, 1.0)));
+	return h.xy / h.z;
 }
 
 float3 backdropAt(texture2d<float> t, int2 p, int2 size) {
@@ -44,11 +46,12 @@ fragment PSOut effect_ps(VSOut v [[stage_in]], const device Inst *insts [[buffer
 						 constant float4 &globals [[buffer(1)]], texture2d<float> backdrop [[texture(3)]],
 						 texture2d<float> clipTex [[texture(4)]], sampler samp [[sampler(0)]]) {
 	Inst i = insts[v.inst];
+	Frame fr = frameOf(v, i);
 	// The shape's corners are continuous where its radii are negative,
 	// which the effect takes as circular.
 	Effect e = {i.rect, abs(i.radii), i.inner,	  i.color,			i.color2,	  i.border,
-				i.grad, i.uv,		  i.params.z, globals.z > 0.5f, i.transform0, i.transform1};
-	float4 res = effect(v.p, e, backdrop) * (localCoverage(v.p, i.rect, i.radii, i.transform0.w) *
+				i.grad, i.uv,		  i.params.z, globals.z > 0.5f, i.transform0, i.transform1, i.transform2};
+	float4 res = effect(v.p, e, backdrop) * (localCoverage(v.p, i.rect, i.radii, i.transform0.w, fr) *
 											 clipCoverage(v, i, clipTex, samp) * i.params.w);
 	return PSOut{res, res.aaaa};
 }

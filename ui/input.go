@@ -195,7 +195,7 @@ func (rt *engine) pointerMove(x, y float32) {
 		return
 	}
 	if rt.pressed != nil && rt.pointerIn {
-		dx, dy := rt.pressed.vector(x-rt.pointerX, y-rt.pointerY)
+		dx, dy := rt.pressed.vector(rt.pointerX, rt.pointerY, x-rt.pointerX, y-rt.pointerY)
 		rt.pressed.dragX += dx
 		rt.pressed.dragY += dy
 		rt.pressed.drag.move(rt.now(), dx, dy)
@@ -401,7 +401,7 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise bool) {
 		if s == nil {
 			continue
 		}
-		sx, sy := s.vector(dx, dy)
+		sx, sy := s.vector(rt.pointerX, rt.pointerY, dx, dy)
 		if scrollBy(s, sx, sy) {
 			rt.requestFrame()
 			return

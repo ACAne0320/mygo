@@ -12,11 +12,13 @@ struct Effect {
 	float4 p0, p1, p2, p3, p4;
 	float4 area; // where the backdrop's area starts in the frame, and its size in texels
 	float down;	 // the size of the squares the backdrop averages
-	float4 transform0, transform1;
+	float4 transform0, transform1, transform2;
 };
 
 float2 framePoint(Effect e, float2 q) {
-	return float2(dot(e.transform0.xyz, float3(q, 1.0)), dot(e.transform1.xyz, float3(q, 1.0)));
+	float3 h = float3(dot(e.transform0.xyz, float3(q, 1.0)), dot(e.transform1.xyz, float3(q, 1.0)),
+					  dot(float3(e.transform2.xy, 1.0), float3(q, 1.0)));
+	return h.xy / h.z;
 }
 
 float3 backdropAt(int2 p, int2 size) { return backdropTex.Load(int3(clamp(p, int2(0, 0), size - 1), 0)).rgb; }
@@ -39,6 +41,7 @@ float3 sampleBackdrop(Effect e, float2 q) {
 // effect
 
 PSOut effectps(VSOut i) {
+	Frame fr = frameOf(i);
 	Effect e;
 	e.rect = i.rect;
 	e.radii = abs(i.radii);
@@ -51,8 +54,9 @@ PSOut effectps(VSOut i) {
 	e.down = i.params.z;
 	e.transform0 = i.transform0;
 	e.transform1 = i.transform1;
+	e.transform2 = i.transform2;
 	float4 res =
-		effect(i.p, e) * (localCoverage(i.p, i.rect, i.radii, i.transform0.w) * clipCoverage(i) * i.params.w);
+		effect(i.p, e) * (localCoverage(i.p, i.rect, i.radii, i.transform0.w, fr) * clipCoverage(i) * i.params.w);
 	PSOut o;
 	o.color = res;
 	o.alpha = res.aaaa;

@@ -128,7 +128,7 @@ func (p *Painter) element(e *node) {
 	if r := e.st.trec; r != nil && r.built == p.rt.frame && r.elem == e {
 		p.rt.animateColors(e, r)
 	}
-	if e.flags&flagInvisible != 0 {
+	if e.flags&flagInvisible != 0 || e.backface && e.transform.facesAway() {
 		return
 	}
 	if e.isInline() {

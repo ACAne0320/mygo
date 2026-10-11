@@ -214,7 +214,7 @@ func (r *Renderer) init() error {
 	}
 	glGenVertexArrays(1, &r.passVAO)
 
-	// The instance buffer feeds thirteen float4 attributes per instance;
+	// The instance buffer feeds fourteen float4 attributes per instance;
 	// draws point them at their batch's instances.
 	glGenVertexArrays(1, &r.vao)
 	glGenBuffers(1, &r.buf)
