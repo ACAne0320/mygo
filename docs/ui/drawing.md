@@ -78,8 +78,9 @@ panel.Width(panel.Animate("width", width, 200*time.Millisecond))
 ```
 
 `AnimateWith` takes the easing: `ui.Linear`, `ui.EaseIn`, `ui.EaseOut` (as
-`Animate`), `ui.EaseInOut`, any `func(t float32) float32`, or
-`ui.Bounce(e)`, which goes along `e` and comes back. `Loop` returns the
+`Animate`), `ui.EaseInOut`, `ui.CubicBezier(x1, y1, x2, y2)`, any
+`func(t float32) float32`, or `ui.Bounce(e)`, which goes along `e` and
+comes back. `AnimateTo` takes springs as well (see [Motion](motion.md)). `Loop` returns the
 progress of an animation that starts over every period, for spinners and
 pulses; `Rotate` turns an element, as an icon:
 
@@ -120,6 +121,6 @@ When the desktop asks for less motion (`c.Preferences().ReduceMotion`),
 the system's spinners do: it shows that something is going on. Motion you
 compute yourself should read the preference too.
 
-[Transforms and motion](transforms.md) adds visual transforms of arbitrary
-elements, springs that preserve velocity when retargeted, and keyframe
-sequences. These APIs share the frame scheduler and reduced-motion preferences.
+[Motion](motion.md) has springs that keep their velocity, delays, values
+following the pointer, keyframes, and how to tell when an animation is
+done; [Transforms](transforms.md) move, scale and rotate any element.

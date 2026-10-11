@@ -367,7 +367,8 @@ func (rt *engine) pointerUp(button, clicks int) {
 	}
 	rt.pressed = nil
 	s.pressed = false
-	s.released = true
+	// A press that moved ends a drag; a click does not.
+	s.released = s.drag.n > 1
 	s.releaseVX, s.releaseVY = s.drag.velocity(rt.now())
 	if s.editor != nil {
 		s.editor.release()
@@ -1112,9 +1113,10 @@ func (e *node) DragVelocity() (vx, vy float32) {
 	return s.drag.velocity(e.c.rt.now())
 }
 
-// DragEnded reports whether the pointer pressing the element let go since
-// the last frame, with how fast it moved then, as DragVelocity: a spring
-// taking over (SpringOptions.Velocity) keeps the fling going.
+// DragEnded reports whether the pointer pressing the element, and moving,
+// let go since the last frame, with how fast it moved then, as
+// DragVelocity: a spring taking over (SpringOptions.Velocity) keeps the
+// fling going. A click, which does not move, ends no drag.
 func (e *node) DragEnded() (vx, vy float32, ok bool) {
 	if !e.hasState() {
 		return 0, 0, false

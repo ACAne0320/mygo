@@ -2831,9 +2831,10 @@ func (_handle Element) DragDataFrom(data func() transfer.Data, options ...transf
 	return wrapElement(_node.DragDataFrom(func() transfer.Data { return data() }, options...))
 }
 
-// DragEnded reports whether the pointer pressing the element let go since
-// the last frame, with how fast it moved then, as DragVelocity: a spring
-// taking over (SpringOptions.Velocity) keeps the fling going.
+// DragEnded reports whether the pointer pressing the element, and moving,
+// let go since the last frame, with how fast it moved then, as
+// DragVelocity: a spring taking over (SpringOptions.Velocity) keeps the
+// fling going. A click, which does not move, ends no drag.
 func (_handle Element) DragEnded() (float32, float32, bool) {
 	_node := _handle.node()
 	if _node == nil {
@@ -3361,6 +3362,19 @@ func (_handle Element) ID() uint64 {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.ID()
+}
+
+// InView reports whether some of the element showed in the window in the
+// frame before, within the scroll containers and clips around it: to
+// animate it in as it scrolls into view, as Motion's whileInView.
+func (_handle Element) InView() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.InView()
 }
 
 // InsetShadow adds an inner box shadow, as CSS's box-shadow: inset: offset

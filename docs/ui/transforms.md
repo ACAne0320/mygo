@@ -1,4 +1,4 @@
-# Transforms and motion
+# Transforms
 
 `Translate`, `Scale`, and `Rotate` change an element and everything inside
 it visually, while layout reserves its original space. They work on boxes,
@@ -52,11 +52,11 @@ windows and accessibility receive the transformed bounding rectangles of
 carets and elements. Popovers stay upright in the overlay and attach to
 the transformed bounds of their anchors, including during layout transitions.
 
-## Interruptible springs
+## Animating transforms
 
-`Spring` starts at its first target and follows later targets without a
-jump. Retargeting preserves velocity as well as position. It samples the
-old trajectory at the current frame's time before adopting a new target:
+Transforms take animated values as well as fixed ones: a spring that keeps
+its velocity, a curve, keyframes, or a value following the pointer (see
+[Motion](motion.md)):
 
 ```go
 tile := ui.Box(c).Key("tile").Size(80, 50)
@@ -64,46 +64,12 @@ target := float32(0)
 if app.expanded {
 	target = 120
 }
-x := tile.Spring("x", target, ui.SpringOptions{Damping: 14})
-tile.Translate(x, 0)
+tile.Translate(tile.AnimateTo("x", target, ui.Snappy), 0)
 ```
 
-Keep the element's identity and animation key stable, and call `Spring`
-on each build. Options default to mass 1, stiffness 170, damping 26, and
-precision 0.001. Lower damping allows overshoot; all options must be
-positive and finite. `SpringVelocity(key)` gives the sampled velocity in
-value units per second. The oscillator is solved analytically, so frame
-rate and delayed frames do not change its trajectory.
-
-## Keyframe sequences
-
-`Keyframes` plays timed values once and holds the final value. The first
-time must be zero and later times must strictly increase. Each frame's
-`Ease` controls the segment arriving there; nil means `Linear`:
-
-```go
-tile := ui.Box(c).Key("tile").Size(80, 50)
-x := tile.Keyframes("x", []ui.Keyframe{
-	{Value: 0},
-	{At: 200 * time.Millisecond, Value: 100, Ease: ui.EaseOut},
-	{At: 700 * time.Millisecond, Value: 40},
-	{At: time.Second, Value: 0, Ease: ui.EaseInOut},
-}, ui.KeyframeOptions{Run: app.sequenceRun})
-tile.Translate(x, 0)
-```
-
-Increment `Run` to replay, or when supplying a changed sequence. An
-interrupted sequence starts from its current value instead of jumping to
-the supplied first value. The channel keeps one sequence regardless of
-how often it is replayed. `Repeat` is the number of iterations (zero is
-one, -1 repeats forever); `Alternate` reverses every other iteration.
-
-Springs and sequences request display-rate frames only while active. Both
-complete immediately when the desktop asks for reduced motion, including
-when that preference changes during playback. A completed sequence stays
-completed until `Run` changes. Occluded windows use the existing scheduling
-behavior: no animation frames until they become visible again. No background
-polling or animation goroutines are added.
+[Transitions](transitions.md) scale and rotate elements coming and going,
+and move an element appearing from where another showed (`Match`), with
+transforms too.
 
 ## Rendering
 
@@ -126,4 +92,5 @@ transformed text uses grayscale coverage. GPU antialiasing follows the CPU
 renderer in device-pixel coordinates.
 
 The gallery's **Motion** page shows nested transformed editable controls,
-an anchored popover, spring retargeting, and replayable keyframe sequences.
+an anchored popover, springs retargeted and thrown, keyframe sequences, and
+shared elements.

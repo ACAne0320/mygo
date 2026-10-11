@@ -413,6 +413,17 @@ func (e *node) Arrived(key any) bool {
 	return false
 }
 
+// InView reports whether some of the element showed in the window in the
+// frame before, within the scroll containers and clips around it: to
+// animate it in as it scrolls into view, as Motion's whileInView.
+func (e *node) InView() bool {
+	if !e.hasState() {
+		return false
+	}
+	s := e.st
+	return s.seen+1 >= e.c.rt.frame && s.vw > 0 && s.vh > 0
+}
+
 // Keyframe is a value at At since a sequence starts. The first At must be
 // zero, subsequent times strictly increase. Ease controls the segment
 // arriving at this frame; nil means Linear.

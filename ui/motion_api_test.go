@@ -298,4 +298,33 @@ func TestDragVelocity(t *testing.T) {
 	if !ended || ex != 0 || ey != 0 {
 		t.Fatalf("resting, it let go at %v, %v", ex, ey)
 	}
+	// A click ends no drag.
+	ended = false
+	tt.Press(30, 10)
+	tt.Release(30, 10)
+	if ended {
+		t.Fatal("a click ended a drag")
+	}
+}
+
+func TestInView(t *testing.T) {
+	var top, bottom *node
+	var topIn, bottomIn bool
+	tt := coreNewTester(func(c *context) {
+		coreScroll(c).Size(100, 100).Children(func() {
+			top = coreBox(c).Key("top").Size(100, 60)
+			coreBox(c).Size(100, 200)
+			bottom = coreBox(c).Key("bottom").Size(100, 60)
+			topIn, bottomIn = top.InView(), bottom.InView()
+		})
+	}, 200, 200)
+	tt.Frame()
+	if !topIn || bottomIn {
+		t.Fatalf("at the top, the top is in view %v, the bottom %v", topIn, bottomIn)
+	}
+	tt.Scroll(50, 50, 0, 1000)
+	tt.Frame()
+	if topIn || !bottomIn {
+		t.Fatalf("at the bottom, the top is in view %v, the bottom %v", topIn, bottomIn)
+	}
 }

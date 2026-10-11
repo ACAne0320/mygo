@@ -1547,11 +1547,20 @@ either.
   the GPU. Backdrop effects map local samples into the frame. With a GPU,
   every frame draws there, including resting changes to transformed content.
   Metal retains wide colors under transforms. See
-  [Transforms and motion](ui/transforms.md#rendering) for rendering details.
-  Springs solve damped oscillators analytically and sample before retargeting
-  so position and velocity survive interruptions. Keyframe sequences keep
-  a bounded channel per key with an explicit replay token. Both ask for
-  frames only while active and complete when reduced motion is enabled.
+  [Transforms](ui/transforms.md#rendering) for rendering details.
+- **Motion** (`ui/motion.go`): every animated value of an element
+  (`AnimateTo`, `Animate`, `AnimateWith`, `Spring`, `Jump`) is a `channel`
+  by key, with a value, a velocity and the time they hold for, moving
+  along a curve or a spring. Springs solve damped oscillators analytically
+  (`solveSpring`), so frames however far apart follow one path; a channel
+  samples its path at the frame's time before taking a new target or kind
+  of animation, so position and velocity survive interruptions (a curve's
+  velocity is its easing's slope). A delayed target waits in the channel
+  while the old path goes on. `Jump` sets values and derives a velocity
+  from successive ones; presses keep their last moves (`dragTrack`) for
+  `DragVelocity` and `DragEnded`. Keyframe sequences keep one sequence per
+  key with an explicit replay token. All ask for frames only while moving,
+  and end at their targets under reduced motion.
 - **Transitions** (`ui/transition.go`) animate elements FLIP-style, after
   the layout of each frame and before `place` turns boxes into window
   coordinates: an element given a `Transition` keeps, by its ID, where the
@@ -1559,8 +1568,14 @@ either.
   goes from what it showed to a new place or size over the transition
   (parents first, as one resizing lays out its content anew at each size,
   which then moves itself). Moving with a parent or a scroll offset is no
-  change; resizing the window and reduced motion animate nothing. Colors
-  move as elements paint, after their `styleFn`. An element appears with
+  change; resizing the window animates nothing, and reduced motion only
+  fades and colors. Each moving component (position, size, opacity, and a
+  `Motion`'s scale and rotation) is a motion `channel`, so a spring keeps
+  its velocity through changes and a delay holds them. Colors move as
+  elements paint, after their `styleFn`. A `Match` moves an element
+  appearing where another of the same identity showed the frame before
+  (`rt.matched`, in window coordinates) by a transform after `place`
+  (`animateMatches`), across parents and scroll offsets. An element appears with
   its `Enter` only in a parent the frame before had. One no longer built,
   whose parent still is, goes with its `Exit` as an inert copy, laid out
   and painted under its siblings without taking room: frames that built
