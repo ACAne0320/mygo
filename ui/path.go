@@ -13,6 +13,9 @@ import (
 // icons, check marks, charts.
 type Path struct {
 	cmds []pathCmd
+	// trim is the part of the path's length it keeps (Trim), when trimmed.
+	trim    [2]float32
+	trimmed bool
 }
 
 type pathCmd struct {
@@ -52,6 +55,17 @@ func (p *Path) Close() *Path {
 	return p
 }
 
+// Trim keeps of the path, as a Painter fills or strokes it, the part of
+// its length from from to to, as fractions of it, its subpaths one after
+// another, and returns the path: 0 to 0.5 draws its first half, and a check
+// mark draws itself as to animates from 0 to 1, as SwiftUI's trim(from:to:)
+// and Motion's pathLength. Trimmed, closed subpaths draw open.
+func (p *Path) Trim(from, to float32) *Path {
+	finiteMotion("trim", float64(from), float64(to))
+	p.trim, p.trimmed = [2]float32{max(0, min(from, 1)), max(0, min(to, 1))}, true
+	return p
+}
+
 // Circle adds a circle as a subpath.
 func (p *Path) Circle(cx, cy, r float32) *Path {
 	const k = 0.5522847498
@@ -70,6 +84,10 @@ type flatPath struct {
 	pts    [][2]float32
 	starts []int
 	closed []bool
+	// The polylines that trimming keeps, swapped with the others.
+	keptPts    [][2]float32
+	keptStarts []int
+	keptClosed []bool
 }
 
 func (f *flatPath) polys() int { return len(f.starts) }
@@ -136,6 +154,57 @@ func (p *Path) flatten(f *flatPath, scale float32) {
 		}
 	}
 	flush()
+	if p.trimmed {
+		f.trim(p.trim[0], p.trim[1])
+	}
+}
+
+// trim keeps the part of f's length from from to to, as fractions of it,
+// as open polylines.
+func (f *flatPath) trim(from, to float32) {
+	// segments returns how many segments polyline i has, a closed one's
+	// back to its start included.
+	segments := func(i int) int {
+		n := len(f.poly(i)) - 1
+		if f.closed[i] {
+			n++
+		}
+		return n
+	}
+	var total float32
+	for i := range f.polys() {
+		poly := f.poly(i)
+		for j := range segments(i) {
+			total += dist(poly[j], poly[(j+1)%len(poly)])
+		}
+	}
+	lo, hi := from*total, to*total
+	pts, starts, closed := f.keptPts[:0], f.keptStarts[:0], f.keptClosed[:0]
+	var at float32
+	for i := range f.polys() {
+		poly := f.poly(i)
+		open := false // a kept polyline goes on to the next segment
+		for j := range segments(i) {
+			a, b := poly[j], poly[(j+1)%len(poly)]
+			l := dist(a, b)
+			s, e := max(lo, at), min(hi, at+l)
+			at += l
+			if l == 0 || s >= e {
+				open = open && l == 0
+				continue
+			}
+			k0, k1 := (s-(at-l))/l, (e-(at-l))/l
+			if !open {
+				starts, closed = append(starts, len(pts)), append(closed, false)
+				pts = append(pts, [2]float32{a[0] + (b[0]-a[0])*k0, a[1] + (b[1]-a[1])*k0})
+			}
+			pts = append(pts, [2]float32{a[0] + (b[0]-a[0])*k1, a[1] + (b[1]-a[1])*k1})
+			open = k1 >= 1
+		}
+	}
+	f.keptPts, f.pts = f.pts, pts
+	f.keptStarts, f.starts = f.starts, starts
+	f.keptClosed, f.closed = f.closed, closed
 }
 
 func curveSteps(a, b, c, d [2]float32) int {

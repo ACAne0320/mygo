@@ -429,3 +429,49 @@ func TestKeyframeRepeatDelay(t *testing.T) {
 		t.Errorf("over, %v %v", v, done)
 	}
 }
+
+func TestPathTrim(t *testing.T) {
+	var f flatPath
+	line := (&Path{}).MoveTo(0, 0).LineTo(100, 0)
+	line.Trim(0.25, 0.75).flatten(&f, 2)
+	if f.polys() != 1 || len(f.pts) != 2 || f.pts[0] != [2]float32{50, 0} || f.pts[1] != [2]float32{150, 0} {
+		t.Fatalf("a line trimmed to its middle: %v", f.pts)
+	}
+	square := (&Path{}).MoveTo(0, 0).LineTo(10, 0).LineTo(10, 10).LineTo(0, 10).Close()
+	square.Trim(0, 0.625).flatten(&f, 1)
+	want := [][2]float32{{0, 0}, {10, 0}, {10, 10}, {5, 10}}
+	if f.polys() != 1 || f.closed[0] || len(f.pts) != len(want) {
+		t.Fatalf("a square trimmed: %v", f.pts)
+	}
+	for i := range want {
+		if f.pts[i] != want[i] {
+			t.Fatalf("a square trimmed: %v", f.pts)
+		}
+	}
+	// Into the closing side, and across subpaths.
+	two := (&Path{}).MoveTo(0, 0).LineTo(10, 0).MoveTo(0, 5).LineTo(10, 5)
+	two.Trim(0.25, 0.75).flatten(&f, 1)
+	if f.polys() != 2 || f.poly(0)[0] != [2]float32{5, 0} || f.poly(1)[1] != [2]float32{5, 5} {
+		t.Fatalf("two lines trimmed: %v %v", f.pts, f.starts)
+	}
+	square.Trim(0.9, 1).flatten(&f, 1)
+	if f.polys() != 1 || math.Abs(float64(f.pts[0][1]-4)) > 1e-4 || f.pts[0][0] != 0 || f.pts[1] != [2]float32{0, 0} {
+		t.Fatalf("the closing side trimmed: %v", f.pts)
+	}
+	square.Trim(0.5, 0.5).flatten(&f, 1)
+	if f.polys() != 0 {
+		t.Fatalf("nothing kept, %v", f.pts)
+	}
+	// Painted, a trimmed stroke shows only its part.
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Size(100, 20).Draw(func(p *Painter, r Rect) {
+			p.StrokePath((&Path{}).MoveTo(r.X, r.Y+10).LineTo(r.X+100, r.Y+10).Trim(0, 0.5), 4, RGB(255, 0, 0))
+		})
+	}, 100, 20)
+	if p := tt.Image().RGBAAt(25, 10); p.R < 200 || p.G > 50 {
+		t.Errorf("the half kept is %v", p)
+	}
+	if p := tt.Image().RGBAAt(75, 10); p.R > 200 && p.G < 50 {
+		t.Errorf("the half trimmed away is %v", p)
+	}
+}
