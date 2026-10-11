@@ -36,9 +36,6 @@ struct Inst {
 struct VSOut {
 	float4 pos : SV_Position;
 	float4 pt : PIXEL; // the position in pixels, and the texture coordinates
-	// The frame point times its projective divisor, and the divisor: they
-	// interpolate in perspective to what divides into the frame point.
-	float3 world : WORLD;
 	nointerpolation float4 rect : RECT;
 	nointerpolation float4 radii : RADII;
 	nointerpolation float4 inner : INNER;
@@ -85,7 +82,6 @@ VSOut vs(uint vid : SV_VertexID, Inst i) {
 	VSOut o;
 	o.pos = float4(h.xy / viewport * float2(2, -2) + h.z * float2(-1, 1), 0, h.z);
 	o.pt.xy = p;
-	o.world = h;
 	o.pt.zw = i.uv.xy + (p - i.rect.xy) / i.rect.zw * (i.uv.zw - i.uv.xy);
 	o.rect = i.rect;
 	o.radii = i.radii;
@@ -150,8 +146,10 @@ struct Frame {
 Frame frameOf(VSOut v) {
 	Frame f;
 	f.persp = any(v.transform2.xy != 0);
-	// In perspective, the pixel's center, as interpolating drifts.
-	f.s = f.persp ? v.pos.xy : v.world.xy / v.world.z;
+	// In perspective, the pixel's center; else the frame point of the
+	// local one, which the affine map moves linearly: Direct3D 10's shaders
+	// pass on 16 values at most.
+	f.s = f.persp ? v.pos.xy : float2(dot(v.transform0.xyz, float3(v.pt.xy, 1)), dot(v.transform1.xyz, float3(v.pt.xy, 1)));
 	float3 r0 = v.transform0.xyz, r1 = v.transform1.xyz, r2 = float3(v.transform2.xy, 1);
 	f.c0 = cross(r1, r2);
 	f.c1 = cross(r2, r0);

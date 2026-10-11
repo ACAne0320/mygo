@@ -1534,14 +1534,22 @@ either.
   each part took, which path drew them, what the process allocated and
   whether the collector ran (`ui/framestats.go`).
 - **Visual transforms and motion** (`ui/transform.go`, `ui/motion.go`). An
-  element's affine transform composes with its ancestors after layout;
-  boxes keep their original layout space. Painting stores the composed
-  transform on scene operations and clips, and committing keeps it on the
-  state for inverse-mapped pointer input, carets, accessibility bounds, and
-  overlays attached to visual bounds. The CPU renderer inverse maps pixels
-  for transformed primitives and clips. GPU builders retain local geometry
-  and send affine rows with every instance; the vertex shaders transform
-  the quad and fragment shaders integrate coverage in device space. Nested
+  element's transform, 2D, or 3D in a 4×4 matrix (`mat4`) that it flattens
+  into its parent's plane as CSS's flat transform-style does, composes
+  with its ancestors after layout as a projective map
+  (`scene.Affine`, with G and H in perspective); boxes keep their original
+  layout space. Painting stores the composed transform on scene
+  operations and clips, and committing keeps it on the state for
+  inverse-mapped pointer input, carets, accessibility bounds, and overlays
+  attached to visual bounds. The CPU renderer inverse maps pixels for
+  transformed primitives and clips, and leaves what a projective map puts
+  behind the viewer. GPU builders retain local geometry and send three
+  transform rows with every instance; the vertex shaders project the quad
+  in homogeneous coordinates, so that local coordinates interpolate in
+  perspective, and fragment shaders integrate coverage in device space:
+  from screen derivatives for affine maps, and, in perspective, at the
+  CPU renderer's sample points, mapped back from the pixel's center
+  through the inverse. Nested
   transformed or rounded clips use cached masks, independent of content
   moving within them; hard clips in the drawing's coordinates evaluate on
   the GPU. Backdrop effects map local samples into the frame. With a GPU,
@@ -1560,7 +1568,15 @@ either.
   from successive ones; presses keep their last moves (`dragTrack`) for
   `DragVelocity` and `DragEnded`. Keyframe sequences keep one sequence per
   key with an explicit replay token. All ask for frames only while moving,
-  and end at their targets under reduced motion.
+  and end at their targets under reduced motion. Poses (`ui/pose.go`,
+  `AnimatePose`) are channels sampled as frames commit, into a transform
+  after the element's own (`poseM`) and a fade; frames that only paint
+  (`repaintFrame`) move the posed elements of the last frame built on
+  (`repose`) and set their subtrees' transforms again (`updateWorld`), so
+  they move without the view running. Content transitions (`ui/content.go`)
+  keep what an element showed, and fade or roll it into what it shows as
+  it paints, counting paintings (`engine.paints`) rather than frames
+  built, so frames that only paint move them on too.
 - **Transitions** (`ui/transition.go`) animate elements FLIP-style, after
   the layout of each frame and before `place` turns boxes into window
   coordinates: an element given a `Transition` keeps, by its ID, where the

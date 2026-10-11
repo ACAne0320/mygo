@@ -80,3 +80,51 @@ func TestContentWindowTransforms(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestContentWindowPerspective exercises a real surface, its capture and
+// pointer delivery through a 3D turn seen in perspective.
+func TestContentWindowPerspective(t *testing.T) {
+	var point atomic.Pointer[[2]float32]
+	var clicks atomic.Int32
+	view := func(c *ui.Context) {
+		ui.Box(c).Fill().Background(ui.RGB(250, 250, 250)).Children(func() {
+			e := ui.Box(c).Absolute().Left(70).Top(50).Size(200, 120).Background(ui.RGB(220, 30, 40)).
+				RotateY(45).Perspective(500).BackfaceHidden()
+			if e.Clicked() {
+				clicks.Add(1)
+			}
+			e.Draw(func(_ *ui.Painter, _ ui.Rect) {
+				// Near its far edge, which perspective moves the most.
+				x, y := e.LocalToWindow(185, 60)
+				point.Store(&[2]float32{x, y})
+			})
+		})
+	}
+	w := newWindow(t, mygo.WindowOptions{Title: "Perspective", Width: 340, Height: 240, Content: ui.View(view)})
+	eventually(t, "turned geometry", func() bool { return point.Load() != nil })
+	p := point.Load()
+	if !click(w, float64(p[0]), float64(p[1])) {
+		t.Skip("surface click automation unavailable")
+	}
+	eventually(t, "a click through perspective", func() bool { return clicks.Load() == 1 })
+	scale := deviceScale(w)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, ok := surfaceOnScreen(w)
+		if !ok {
+			t.Skip("surface capture unavailable")
+		}
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		red, green, _, _ := img.At(int(float64(p[0])*scale), int(float64(p[1])*scale)).RGBA()
+		if red>>8 > 180 && green>>8 < 70 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the turned element was not presented: red=%d green=%d", red>>8, green>>8)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
