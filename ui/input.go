@@ -198,6 +198,7 @@ func (rt *engine) pointerMove(x, y float32) {
 		dx, dy := rt.pressed.vector(x-rt.pointerX, y-rt.pointerY)
 		rt.pressed.dragX += dx
 		rt.pressed.dragY += dy
+		rt.pressed.drag.move(rt.now(), dx, dy)
 		if rt.pressed.flags&(flagTrackPointer|flagDraggable|flagEditable|flagSelectable) != 0 {
 			rt.requestFrame()
 		} else {
@@ -288,6 +289,7 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, count in
 		h.pressed = true
 		h.pressPending = true
 		h.pressX, h.pressY = h.local(x, y)
+		h.drag.reset(rt.now())
 		return
 	}
 	if button == 1 && rt.menuPress(chain, x, y) {
@@ -323,6 +325,7 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, count in
 	target.pressed, target.pressMods = true, mods
 	target.pressPending = true
 	target.pressX, target.pressY = target.local(x, y)
+	target.drag.reset(rt.now())
 	if button == 0 && rt.pressTextSelection(target, x, y, mods, clicks) {
 		return
 	}
@@ -364,6 +367,8 @@ func (rt *engine) pointerUp(button, clicks int) {
 	}
 	rt.pressed = nil
 	s.pressed = false
+	s.released = true
+	s.releaseVX, s.releaseVY = s.drag.velocity(rt.now())
 	if s.editor != nil {
 		s.editor.release()
 	}
@@ -1090,6 +1095,95 @@ func (e *node) Dragged() (dx, dy float32, ok bool) {
 		e.c.rt.consumed = true
 	}
 	return s.dragX, s.dragY, true
+}
+
+// DragVelocity returns how fast, in DIPs per second along the element's
+// local axes, the pointer pressing the element moves now: zero once it
+// stops for a moment, or while nothing presses the element.
+func (e *node) DragVelocity() (vx, vy float32) {
+	if !e.hasState() {
+		return 0, 0
+	}
+	e.flags |= flagDraggable
+	s := e.st
+	if !s.pressed {
+		return 0, 0
+	}
+	return s.drag.velocity(e.c.rt.now())
+}
+
+// DragEnded reports whether the pointer pressing the element let go since
+// the last frame, with how fast it moved then, as DragVelocity: a spring
+// taking over (SpringOptions.Velocity) keeps the fling going.
+func (e *node) DragEnded() (vx, vy float32, ok bool) {
+	if !e.hasState() {
+		return 0, 0, false
+	}
+	e.flags |= flagDraggable
+	s := e.st
+	if !s.released {
+		return 0, 0, false
+	}
+	e.c.rt.consumed = true
+	return s.releaseVX, s.releaseVY, true
+}
+
+// dragTrack keeps the last moves of a press, to tell how fast it goes.
+type dragTrack struct {
+	x, y    float32
+	samples [8]dragSample
+	n, last int
+}
+
+type dragSample struct {
+	at   time.Time
+	x, y float32
+}
+
+func (d *dragTrack) reset(now time.Time) {
+	*d = dragTrack{}
+	d.add(now)
+}
+
+func (d *dragTrack) add(now time.Time) {
+	d.last = (d.last + 1) % len(d.samples)
+	d.samples[d.last] = dragSample{now, d.x, d.y}
+	d.n = min(d.n+1, len(d.samples))
+}
+
+// move adds a move by dx, dy at now.
+func (d *dragTrack) move(now time.Time, dx, dy float32) {
+	if dx == 0 && dy == 0 {
+		return // as with the release's position
+	}
+	d.x += dx
+	d.y += dy
+	d.add(now)
+}
+
+// velocity returns how fast the press went over its last 100 ms, zero
+// once it has not moved for 50 ms.
+func (d *dragTrack) velocity(now time.Time) (float32, float32) {
+	if d.n < 2 {
+		return 0, 0
+	}
+	newest := d.samples[d.last]
+	if now.Sub(newest.at) > 50*time.Millisecond {
+		return 0, 0
+	}
+	oldest := newest
+	for i := 1; i < d.n; i++ {
+		s := d.samples[(d.last-i+len(d.samples))%len(d.samples)]
+		if newest.at.Sub(s.at) > 100*time.Millisecond {
+			break
+		}
+		oldest = s
+	}
+	dt := float32(newest.at.Sub(oldest.at).Seconds())
+	if dt <= 0 {
+		return 0, 0
+	}
+	return (newest.x - oldest.x) / dt, (newest.y - oldest.y) / dt
 }
 
 // Changed applies pending input to the controls built so far and reports

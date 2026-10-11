@@ -1,0 +1,301 @@
+package ui
+
+import (
+	"math"
+	"testing"
+	"time"
+)
+
+func TestSpringDurationAndBounce(t *testing.T) {
+	m, k, c, _ := SpringOptions{}.physics()
+	w := 2 * math.Pi / 0.5
+	if m != 1 || math.Abs(k-w*w) > 1e-9 || math.Abs(c-2*w) > 1e-9 {
+		t.Fatalf("the default spring: %v %v %v", m, k, c)
+	}
+	_, k, c, _ = SpringOptions{Duration: 250 * time.Millisecond, Bounce: 0.3}.physics()
+	w = 2 * math.Pi / 0.25
+	if math.Abs(k-w*w) > 1e-9 || math.Abs(c-2*0.7*w) > 1e-9 {
+		t.Fatalf("a bouncy spring: %v %v", k, c)
+	}
+	_, _, c, _ = SpringOptions{Bounce: -0.5}.physics()
+	if w := 2 * math.Pi / 0.5; math.Abs(c-2*2*w) > 1e-9 {
+		t.Fatalf("an overdamped spring: %v", c)
+	}
+	m, k, c, _ = SpringOptions{Stiffness: 300}.physics()
+	if m != 1 || k != 300 || c != 26 {
+		t.Fatalf("a physical spring: %v %v %v", m, k, c)
+	}
+	for _, o := range []SpringOptions{
+		{Duration: time.Second, Stiffness: 100},
+		{Bounce: 0.2, Damping: 10},
+		{Bounce: 1},
+		{Bounce: -1},
+		{Duration: -time.Second},
+		{Precision: math.NaN()},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%+v accepted", o)
+				}
+			}()
+			o.physics()
+		}()
+	}
+	// A bouncy spring overshoots its target; a smooth one does not.
+	for _, a := range []struct {
+		Animation
+		over bool
+	}{{Smooth, false}, {Bouncy, true}} {
+		ch := channel{at: time.Unix(0, 0)}
+		ch.retarget(100, a.Animation)
+		most := 0.0
+		for i := 1; i <= 120; i++ {
+			ch.advance(time.Unix(0, 0).Add(time.Duration(i) * time.Second / 60))
+			most = max(most, ch.value)
+		}
+		if (most > 100.01) != a.over || ch.moving {
+			t.Errorf("a spring of %v went as far as %v, moving %v", a.Spring.Bounce, most, ch.moving)
+		}
+	}
+}
+
+func TestSpringTakesAVelocity(t *testing.T) {
+	target := float32(0)
+	o := SpringOptions{}
+	var value float32
+	var e *node
+	tt, now := motionTester(func(c *context) { e = coreBox(c); value = e.Spring("x", target, o) })
+	target, o.Velocity = 100, -2000
+	tt.Frame()
+	if v := e.Velocity("x"); v != -2000 {
+		t.Fatalf("the spring starts at %v/s", v)
+	}
+	*now = now.Add(30 * time.Millisecond)
+	tt.Frame()
+	if value >= 0 {
+		t.Fatalf("thrown away from its target, the value is %v", value)
+	}
+	// The velocity counts only as the target changes.
+	*now = now.Add(time.Second)
+	tt.Frame()
+	if value <= 50 {
+		t.Fatalf("the spring did not head back: %v", value)
+	}
+}
+
+func TestAnimationDelaySettledAndArrived(t *testing.T) {
+	target := float32(0)
+	var value float32
+	var settled, arrived bool
+	arrivals := 0
+	tt, now := motionTester(func(c *context) {
+		e := coreBox(c)
+		value = e.AnimateTo("x", target, Animation{Duration: 100 * time.Millisecond, Ease: Linear, Delay: 50 * time.Millisecond})
+		settled, arrived = e.Settled("x"), e.Arrived("x")
+		if arrived {
+			arrivals++
+		}
+	})
+	if !settled || arrived {
+		t.Fatal("a value at its first target is not settled")
+	}
+	target = 10
+	tt.Frame()
+	if value != 0 || settled {
+		t.Fatalf("delayed, the value is %v, settled %v", value, settled)
+	}
+	*now = now.Add(40 * time.Millisecond)
+	tt.Frame()
+	closeFloat(t, value, 0)
+	*now = now.Add(60 * time.Millisecond)
+	tt.Frame()
+	closeFloat(t, value, 5)
+	*now = now.Add(60 * time.Millisecond)
+	tt.Frame()
+	if value != 10 || !settled || !arrived || arrivals != 1 {
+		t.Fatalf("over, the value is %v, settled %v, arrived %v (%d)", value, settled, arrived, arrivals)
+	}
+	*now = now.Add(10 * time.Millisecond)
+	tt.Frame()
+	if arrived || arrivals != 1 {
+		t.Fatal("arrived again in a later frame")
+	}
+	if tt.rt.animating {
+		t.Fatal("a settled value asks for frames")
+	}
+}
+
+func TestSpringTakesOverACurve(t *testing.T) {
+	target := float32(0)
+	spring := false
+	var value float32
+	var e *node
+	tt, now := motionTester(func(c *context) {
+		e = coreBox(c)
+		a := Animation{Duration: time.Second, Ease: Linear}
+		if spring {
+			a = Snappy
+		}
+		value = e.AnimateTo("x", target, a)
+	})
+	target = 100
+	tt.Frame()
+	*now = now.Add(500 * time.Millisecond)
+	tt.Frame()
+	closeFloat(t, value, 50)
+	closeFloat(t, e.Velocity("x"), 100)
+	spring, target = true, 0
+	tt.Frame()
+	closeFloat(t, value, 50)
+	*now = now.Add(10 * time.Millisecond)
+	tt.Frame()
+	if value <= 50 {
+		t.Fatalf("the spring dropped the curve's velocity: %v", value)
+	}
+}
+
+func TestJumpHandsItsVelocityOn(t *testing.T) {
+	dragging := true
+	x := float32(0)
+	var value float32
+	var e *node
+	tt, now := motionTester(func(c *context) {
+		e = coreBox(c)
+		if dragging {
+			value = e.Jump("x", x)
+		} else {
+			value = e.AnimateTo("x", 0, Smooth)
+		}
+	})
+	for range 5 {
+		*now = now.Add(10 * time.Millisecond)
+		x += 10
+		tt.Frame()
+	}
+	if value != 50 || e.Velocity("x") != 1000 {
+		t.Fatalf("dragged, the value is %v at %v/s", value, e.Velocity("x"))
+	}
+	dragging = false
+	*now = now.Add(10 * time.Millisecond)
+	tt.Frame()
+	*now = now.Add(10 * time.Millisecond)
+	tt.Frame()
+	if value <= 50 {
+		t.Fatalf("let go, the value stopped dead: %v", value)
+	}
+	*now = now.Add(5 * time.Second)
+	tt.Frame()
+	if value != 0 || !e.Settled("x") {
+		t.Fatalf("the value did not come back: %v", value)
+	}
+}
+
+func TestInterruptedKeyframesRepeatTheirRange(t *testing.T) {
+	frames := []Keyframe{{Value: 0}, {At: 100 * time.Millisecond, Value: 100}}
+	s := sequence{frames: frames, options: KeyframeOptions{Repeat: RepeatForever, Alternate: true}, start: time.Unix(0, 0), from: 50}
+	at := func(d time.Duration) float32 { v, _ := s.sample(s.start.Add(d)); return v }
+	closeFloat(t, at(0), 50)
+	closeFloat(t, at(50*time.Millisecond), 75)
+	// Back to the first frame's value, not to where it was interrupted.
+	closeFloat(t, at(199*time.Millisecond), 1)
+	closeFloat(t, at(250*time.Millisecond), 50)
+	s = sequence{frames: frames, options: KeyframeOptions{Repeat: 1}, start: time.Unix(0, 0), from: 50}
+	closeFloat(t, at(150*time.Millisecond), 50)
+	if _, done := s.sample(s.start.Add(199 * time.Millisecond)); done {
+		t.Fatal("Repeat 1 played once")
+	}
+	if v, done := s.sample(s.start.Add(200 * time.Millisecond)); !done || v != 100 {
+		t.Fatalf("Repeat 1 played on: %v, %v", v, done)
+	}
+	s = sequence{frames: frames, start: time.Unix(0, 0)}
+	if _, done := s.sample(s.start.Add(100 * time.Millisecond)); !done {
+		t.Fatal("no Repeat played twice")
+	}
+
+	var value float32
+	var arrived bool
+	tt, now := motionTester(func(c *context) {
+		e := coreBox(c)
+		value = e.Keyframes("k", frames, KeyframeOptions{Delay: 50 * time.Millisecond})
+		arrived = e.Arrived("k")
+	})
+	closeFloat(t, value, 0)
+	*now = now.Add(100 * time.Millisecond)
+	tt.Frame()
+	closeFloat(t, value, 50)
+	*now = now.Add(100 * time.Millisecond)
+	tt.Frame()
+	if value != 100 || !arrived {
+		t.Fatalf("over, the sequence is at %v, arrived %v", value, arrived)
+	}
+}
+
+func TestCubicBezier(t *testing.T) {
+	ease := CubicBezier(0.25, 0.1, 0.25, 1) // CSS's ease
+	for _, c := range []struct{ x, y float32 }{{0, 0}, {1, 1}, {0.25, 0.4085}, {0.5, 0.8024}, {0.75, 0.9604}} {
+		if y := ease(c.x); math.Abs(float64(y-c.y)) > 1e-3 {
+			t.Errorf("ease(%v) = %v, not %v", c.x, y, c.y)
+		}
+	}
+	linear := CubicBezier(0, 0, 1, 1)
+	for x := float32(0); x <= 1; x += 0.1 {
+		if y := linear(x); math.Abs(float64(y-x)) > 1e-4 {
+			t.Errorf("linear(%v) = %v", x, y)
+		}
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("x2 of 2 accepted")
+			}
+		}()
+		CubicBezier(0, 0, 2, 1)
+	}()
+}
+
+func TestDragVelocity(t *testing.T) {
+	var vx, vy, ex, ey float32
+	var ended bool
+	tt, now := motionTester(func(c *context) {
+		e := coreBox(c).Size(200, 100)
+		vx, vy = e.DragVelocity()
+		if x, y, ok := e.DragEnded(); ok {
+			ex, ey, ended = x, y, true
+		}
+	})
+	tt.Move(10, 10)
+	tt.Press(10, 10)
+	for i := 1; i <= 5; i++ {
+		*now = now.Add(10 * time.Millisecond)
+		tt.Move(10+float32(i)*5, 10+float32(i)*2)
+	}
+	tt.Frame()
+	closeFloat(t, vx, 500)
+	closeFloat(t, vy, 200)
+	*now = now.Add(5 * time.Millisecond)
+	tt.Release(35, 20)
+	if !ended {
+		t.Fatal("the drag did not end")
+	}
+	closeFloat(t, ex, 500)
+	closeFloat(t, ey, 200)
+	if vx != 0 || vy != 0 {
+		t.Fatal("let go, the drag still has a velocity")
+	}
+	ended = false
+	tt.Frame()
+	if ended {
+		t.Fatal("the drag ended twice")
+	}
+	// A pointer resting before it lets go flings nothing.
+	tt.Move(10, 10)
+	tt.Press(10, 10)
+	*now = now.Add(10 * time.Millisecond)
+	tt.Move(30, 10)
+	*now = now.Add(200 * time.Millisecond)
+	tt.Release(30, 10)
+	if !ended || ex != 0 || ey != 0 {
+		t.Fatalf("resting, it let go at %v, %v", ex, ey)
+	}
+}

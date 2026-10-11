@@ -20,7 +20,7 @@ func TestSpringRetargetKeepsVelocityBetweenFrames(t *testing.T) {
 	target := float32(0)
 	var value, velocity float32
 	var e *node
-	tt, now := motionTester(func(c *context) { e = coreBox(c); value = e.Spring("x", target); velocity = e.SpringVelocity("x") })
+	tt, now := motionTester(func(c *context) { e = coreBox(c); value = e.Spring("x", target); velocity = e.Velocity("x") })
 	target = 100
 	tt.Frame()
 	*now = now.Add(120 * time.Millisecond)
@@ -30,7 +30,7 @@ func TestSpringRetargetKeepsVelocityBetweenFrames(t *testing.T) {
 	}
 	// Retarget 30 ms after the last drawn frame. The old trajectory must
 	// be sampled at the interruption time before its new target is adopted.
-	expected := *e.st.springs["x"]
+	expected := *e.st.motions["x"]
 	*now = now.Add(30 * time.Millisecond)
 	expected.advance(*now)
 	target = -50
@@ -54,16 +54,14 @@ func TestSpringRetargetKeepsVelocityBetweenFrames(t *testing.T) {
 func TestSpringFrameRateIndependenceAndDamping(t *testing.T) {
 	for _, damping := range []float64{5, 2 * math.Sqrt(170), 60} {
 		t.Run(time.Duration(damping).String(), func(t *testing.T) {
-			o := SpringOptions{Damping: damping}.defaults()
-			start := time.Unix(0, 0)
-			a := spring{target: 100, at: start, options: o}
-			b := a
-			a.advance(start.Add(time.Second))
-			for i := 1; i <= 120; i++ {
-				b.advance(start.Add(time.Duration(i) * time.Second / 120))
+			m, k, c, _ := SpringOptions{Damping: damping}.physics()
+			ax, av := solveSpring(-100, 0, m, k, c, 1)
+			bx, bv := -100.0, 0.0
+			for range 120 {
+				bx, bv = solveSpring(bx, bv, m, k, c, 1.0/120)
 			}
-			if math.Abs(a.value-b.value) > 1e-6 || math.Abs(a.velocity-b.velocity) > 1e-6 {
-				t.Fatalf("frame rate changed spring: %+v / %+v", a, b)
+			if math.Abs(ax-bx) > 1e-6 || math.Abs(av-bv) > 1e-6 {
+				t.Fatalf("frame rate changed spring: %v, %v / %v, %v", ax, av, bx, bv)
 			}
 		})
 	}
@@ -91,7 +89,7 @@ func TestKeyframeTimingRestartAndAlternate(t *testing.T) {
 	if tt.rt.animating {
 		t.Fatal("completed sequence requests frames")
 	}
-	s := sequence{frames: frames, options: KeyframeOptions{Repeat: 2, Alternate: true}, start: time.Unix(0, 0)}
+	s := sequence{frames: frames, options: KeyframeOptions{Repeat: 1, Alternate: true}, start: time.Unix(0, 0)}
 	v, done := s.sample(s.start.Add(500 * time.Millisecond))
 	closeFloat(t, v, 10)
 	if done {

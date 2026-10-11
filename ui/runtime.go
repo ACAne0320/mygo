@@ -151,7 +151,9 @@ type engine struct {
 	// with an Exit, whose arena the next frame keeps to copy those that
 	// go, laidW and laidH are the size the last frame was laid out at, and
 	// byID maps a frame's elements, for the copies going.
-	trans        map[uint64]*transition
+	trans map[uint64]*transition
+	// matched is where the elements of a Transition's Match showed.
+	matched      map[any]*matchRec
 	exitsBuilt   bool
 	laidW, laidH float32
 	byID         map[uint64]*node
@@ -610,6 +612,7 @@ func (rt *engine) forgetInput() {
 		s.clicks, s.rightClicks, s.doubleClicks = 0, 0, 0
 		s.pressPending = false
 		s.dragX, s.dragY = 0, 0
+		s.released = false
 		s.dropped = nil
 		s.droppedValue, s.hasDropped = nil, false
 		s.dataDropped = nil

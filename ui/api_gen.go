@@ -2202,6 +2202,7 @@ func (_handle Element) AlignSelf(a Align) Element {
 // keeps frames coming while it moves; key tells apart the animations of
 // the element. The value starts at the first target. When the desktop asks
 // for less motion (Preferences.ReduceMotion), it goes to target at once.
+// AnimateTo takes springs and delays too.
 func (_handle Element) Animate(key any, target float32, d time.Duration) float32 {
 	_node := _handle.node()
 	if _node == nil {
@@ -2210,6 +2211,24 @@ func (_handle Element) Animate(key any, target float32, d time.Duration) float32
 	_ctx := _node.c
 	_ = _ctx
 	return _node.Animate(key, target, d)
+}
+
+// AnimateTo returns a value that goes to target as a says, and keeps
+// frames coming while it moves; key tells apart the animated values of
+// the element, which Animate, AnimateWith and Spring share. The value
+// starts at the first target (Jump sets it elsewhere first). A new target
+// on the way, or a new kind of Animation, takes over from where the value
+// is: a spring keeps its velocity, even that of a curve. When the desktop
+// asks for less motion (Preferences.ReduceMotion), the value goes to its
+// target at once.
+func (_handle Element) AnimateTo(key any, target float32, a Animation) float32 {
+	_node := _handle.node()
+	if _node == nil {
+		return 0
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.AnimateTo(key, target, a)
 }
 
 // AnimateWith returns a value that moves to target over d as Animate does,
@@ -2222,6 +2241,19 @@ func (_handle Element) AnimateWith(key any, target float32, d time.Duration, eas
 	_ctx := _node.c
 	_ = _ctx
 	return _node.AnimateWith(key, target, d, ease)
+}
+
+// Arrived reports whether the value animated under key came to rest at
+// its target in this frame, after moving there: true in that frame only,
+// for the view to go on, as by removing what faded out.
+func (_handle Element) Arrived(key any) bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.Arrived(key)
 }
 
 // AspectRatio makes the height the width divided by r.
@@ -2799,6 +2831,32 @@ func (_handle Element) DragDataFrom(data func() transfer.Data, options ...transf
 	return wrapElement(_node.DragDataFrom(func() transfer.Data { return data() }, options...))
 }
 
+// DragEnded reports whether the pointer pressing the element let go since
+// the last frame, with how fast it moved then, as DragVelocity: a spring
+// taking over (SpringOptions.Velocity) keeps the fling going.
+func (_handle Element) DragEnded() (float32, float32, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return 0, 0, false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.DragEnded()
+}
+
+// DragVelocity returns how fast, in DIPs per second along the element's
+// local axes, the pointer pressing the element moves now: zero once it
+// stops for a moment, or while nothing presses the element.
+func (_handle Element) DragVelocity() (float32, float32) {
+	_node := _handle.node()
+	if _node == nil {
+		return 0, 0
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.DragVelocity()
+}
+
 // DragWindow makes the element a handle that moves the window, such as the
 // title bar of a frameless window. A double click on it maximizes the
 // window, as on a title bar.
@@ -3355,6 +3413,20 @@ func (_handle Element) Italic() Element {
 	return wrapElement(_node.Italic())
 }
 
+// Jump sets the value animated under key to value at once, as a drag
+// moves it under the pointer, and returns it. The value's velocity
+// follows the jumps from frame to frame, so that a spring taking over
+// from the last (AnimateTo) keeps going the way it went.
+func (_handle Element) Jump(key any, value float32) float32 {
+	_node := _handle.node()
+	if _node == nil {
+		return 0
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.Jump(key, value)
+}
+
 // Justify places the children along the main axis.
 func (_handle Element) Justify(a Align) Element {
 	_node := _handle.node()
@@ -3391,9 +3463,9 @@ func (_handle Element) JustifySelf(a Align) Element {
 	return wrapElement(_node.JustifySelf(a))
 }
 
-// Keyframes plays a sequence once, holding its last value when done. It
-// starts on the first call, with the first frame's value. Keep the element
-// and key stable, and change Run when changing the sequence. Only active
+// Keyframes plays a sequence, holding its last value when done. It starts
+// on the first call, with the first frame's value. Keep the element and
+// key stable, and change Run when changing the sequence. Only active
 // playback asks for animation frames. Reduced motion completes playback at
 // its final value, including when the preference changes mid-sequence.
 func (_handle Element) Keyframes(key any, frames []Keyframe, options ...KeyframeOptions) float32 {
@@ -4201,6 +4273,19 @@ func (_handle Element) SetTextSelection(start int, end int) Element {
 	return wrapElement(_node.SetTextSelection(start, end))
 }
 
+// Settled reports whether the value animated under key, by AnimateTo,
+// Animate, Spring or Keyframes, rests at its target in this frame: true
+// for an unknown key.
+func (_handle Element) Settled(key any) bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.Settled(key)
+}
+
 // Shadow adds a box shadow, offset by x and y, blurred by blur and grown by
 // spread DIPs. As CSS's box-shadow, it shows only outside the box: a
 // translucent background does not show it through.
@@ -4263,11 +4348,8 @@ func (_handle Element) Size(w float32, h float32) Element {
 	return wrapElement(_node.Size(w, h))
 }
 
-// Spring follows target with a spring, preserving both position and
-// velocity when target or options change, even between animation frames.
-// It starts at its first target. Call it in the view on each build, with a
-// stable element and key. It requests frames only while moving and snaps
-// to target while Preferences.ReduceMotion is set.
+// Spring returns a value following target with a spring, as AnimateTo
+// does with Animation{Spring: options}: Smooth's spring without options.
 func (_handle Element) Spring(key any, target float32, options ...SpringOptions) float32 {
 	_node := _handle.node()
 	if _node == nil {
@@ -4276,18 +4358,6 @@ func (_handle Element) Spring(key any, target float32, options ...SpringOptions)
 	_ctx := _node.c
 	_ = _ctx
 	return _node.Spring(key, target, options...)
-}
-
-// SpringVelocity returns the velocity, in value units per second, of
-// the spring sampled by Spring in this build, or zero before it starts.
-func (_handle Element) SpringVelocity(key any) float32 {
-	_node := _handle.node()
-	if _node == nil {
-		return 0
-	}
-	_ctx := _node.c
-	_ = _ctx
-	return _node.SpringVelocity(key)
 }
 
 // Step makes the values of a slider lo and the multiples of step from it,
@@ -4529,8 +4599,10 @@ func (_handle Element) TransformOrigin(x float32, y float32) Element {
 //		})
 //	}
 //
-// Changes made by resizing the window do not animate, and nothing does
-// while the desktop asks for less motion (Preferences.ReduceMotion).
+// Changes made by resizing the window do not animate. While the desktop
+// asks for less motion (Preferences.ReduceMotion), nothing moves: colors
+// still change smoothly, and an Enter or Exit that fades without
+// collapsing fades in place.
 func (_handle Element) Transition(t ElementTransition) Element {
 	_node := _handle.node()
 	if _node == nil {
@@ -4539,6 +4611,19 @@ func (_handle Element) Transition(t ElementTransition) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Transition(t))
+}
+
+// Transitioning reports whether the element's Transition was moving it,
+// or changing its colors, in the frame before: false once it is where the
+// layout puts it.
+func (_handle Element) Transitioning() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.Transitioning()
 }
 
 // Translate moves the element after its existing transform.
@@ -4586,6 +4671,18 @@ func (_handle Element) Value(s string) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Value(s))
+}
+
+// Velocity returns how fast, in its units per second, the value animated
+// under key goes in this frame: zero for one at rest or unknown.
+func (_handle Element) Velocity(key any) float32 {
+	_node := _handle.node()
+	if _node == nil {
+		return 0
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.Velocity(key)
 }
 
 // Vertical makes a SliderBase go up, from lo at the bottom of its content

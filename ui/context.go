@@ -475,7 +475,12 @@ type state struct {
 	pressX, pressY float32
 	dragX, dragY   float32
 	pressed        bool
-	pressPending   bool // the press began since the last build pass
+	// drag follows the press's moves; released tells that it ended since
+	// the last frame, going at releaseVX and releaseVY.
+	drag                 dragTrack
+	released             bool
+	releaseVX, releaseVY float32
+	pressPending         bool // the press began since the last build pass
 
 	// scrollX and scrollY are float64, as the content a List scrolls
 	// may be taller than float32 counts to a fraction of a DIP.
@@ -534,7 +539,7 @@ type state struct {
 	valueBinding any
 	locals       map[any]any
 	anims        map[any]*anim
-	springs      map[any]*spring
+	motions      map[any]*channel
 	sequences    map[any]*sequence
 	shortcuts    []shortcut
 	delivered    []shortcut

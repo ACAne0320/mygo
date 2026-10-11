@@ -104,6 +104,7 @@ func layoutTree(root *node, w, h float32) {
 		rt.lateInput()
 	}
 	place(root, 0, 0)
+	rt.animateMatches()
 }
 
 // lateInput forgets the input of the rows built as their lists laid out,
