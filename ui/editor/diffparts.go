@@ -118,6 +118,7 @@ func DefaultSeparator(c *ui.Context, sep ui.Element, s *DiffSeparator) {
 // them.
 func (d *DiffState) buildSeparators(c *ui.Context, ct *Theme) {
 	ed := &d.eds[1]
+	d.built = d.geom()
 	render := d.RenderSeparator
 	if render == nil {
 		render = DefaultSeparator

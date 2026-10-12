@@ -1,12 +1,17 @@
 package editor
 
+import (
+	"math"
+	"slices"
+)
+
 // diffPrepared is what the blocks and hidden lines were made of.
 type diffPrepared struct {
 	version uint64
 	expandV int
 	layout  DiffLayout
 	context int
-	anns    int
+	anns    uint64 // the annotations' sides, lines and heights, hashed
 	wrapsA  uint64
 	wrapsB  uint64
 	lh      float32
@@ -31,7 +36,7 @@ const diffSeparatorHeight = 32
 
 // prepare makes the hidden lines and the blocks of each side, again only
 // when what they come of changed.
-func (d *DiffState) prepare(force bool) {
+func (d *DiffState) prepare() {
 	d.model.update()
 	unified := d.Layout == DiffUnified
 	edA, edB := &d.eds[0], &d.eds[1]
@@ -40,10 +45,10 @@ func (d *DiffState) prepare(force bool) {
 		viewA = &d.oldView
 	}
 	viewB := &edB.view
-	key := diffPrepared{version: d.model.version, expandV: d.expandV, layout: d.Layout, context: d.context(), anns: len(d.Annotations),
+	key := diffPrepared{version: d.model.version, expandV: d.expandV, layout: d.Layout, context: d.context(), anns: annotationsKey(d.Annotations),
 		wrapsA: viewA.heights.wraps.version, wrapsB: viewB.heights.wraps.version, lh: viewB.lineHeight, wrap: d.Wrap,
 		expAll: d.ExpandUnchanged, inline: d.Inline, nOld: viewA.text.LineCount(), nNew: viewB.text.LineCount()}
-	if d.prepared == key && d.sides[1].blks != nil {
+	if d.prepared == key {
 		return
 	}
 	// Measure the wraps of the lines of the hunks, which spacers align.
@@ -113,7 +118,7 @@ func (d *DiffState) prepare(force bool) {
 		for line, height := range anns[DiffNew] {
 			blkB = append(blkB, block{kind: blockAnnotation, line: line, below: true, height: height, id: line})
 		}
-		d.sides[1].hide, d.sides[1].blks = hideB, blkB
+		d.setSide(1, hideB, blkB)
 		return
 	}
 	// Side by side: walk the rows of each hunk, the shorter side's lines
@@ -226,8 +231,21 @@ func (d *DiffState) prepare(force bool) {
 		}
 	}
 	unchanged(prevA, prevB, min(sides[0].n-prevA, sides[1].n-prevB))
-	d.sides[0].hide, d.sides[0].blks = hideA, blkA
-	d.sides[1].hide, d.sides[1].blks = hideB, blkB
+	d.setSide(0, hideA, blkA)
+	d.setSide(1, hideB, blkB)
+}
+
+// setSide gives side i its hidden lines and blocks, keeping those it has
+// when they are the same, as typing within a line leaves them: the
+// heights take them without work, and the view, whose separators and
+// buttons stand on them, is not built again (blocksV).
+func (d *DiffState) setSide(i int, hide []lineSpan, blks []block) {
+	s := &d.sides[i]
+	if slices.Equal(s.hide, hide) && slices.Equal(s.blks, blks) {
+		return
+	}
+	s.hide, s.blks = hide, blks
+	d.blocksV++
 }
 
 // wrapLineNow measures the wraps of a line, if not yet.
@@ -290,6 +308,26 @@ func (d *DiffState) annotationHeight(side DiffSide, line int) float32 {
 		if a.Side == side && a.Line == line {
 			h += a.Height
 		}
+	}
+	return h
+}
+
+// annotationsKey hashes what of the annotations places the blocks: their
+// sides, lines and heights (FNV-1a).
+func annotationsKey(anns []DiffAnnotation) uint64 {
+	h := uint64(14695981039346656037)
+	mix := func(v uint64) {
+		for range 8 {
+			h ^= v & 0xff
+			h *= 1099511628211
+			v >>= 8
+		}
+	}
+	mix(uint64(len(anns)))
+	for _, a := range anns {
+		mix(uint64(a.Side))
+		mix(uint64(a.Line))
+		mix(uint64(math.Float32bits(a.Height)))
 	}
 	return h
 }

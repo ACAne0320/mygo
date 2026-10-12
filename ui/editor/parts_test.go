@@ -117,9 +117,9 @@ func TestCodeDiffParts(t *testing.T) {
 	if err := tt.Click("Expand 27 unmodified lines"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Frame()
+	// Gone with the frames the click brings, not a frame later.
 	if tt.HasText("Expand 27 unmodified lines") {
-		t.Fatal("the separator before the change did not expand")
+		t.Fatal("the separator stayed after expanding its lines")
 	}
 
 	// The app's.

@@ -88,8 +88,13 @@ type DiffState struct {
 	selected DiffLineRange
 	hasSel   bool
 	prepared diffPrepared
-	gapList  []diffGap
-	partial  *diffPartial
+	// blocksV counts the blocks prepare made, and built is the geometry
+	// the separators and buttons were built for, which a frame changing
+	// it builds again (diffGeom).
+	blocksV int
+	built   diffGeom
+	gapList []diffGap
+	partial *diffPartial
 }
 
 // DiffLayout is how a diff viewer lays out its two texts.
@@ -306,8 +311,9 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 			ed.layout(r.W, r.H, p.Scale())
 			d.oldView.setStyle(ed.view.font, ed.o.lineHeight, p.Scale(), ed.tabSize())
 			d.oldView.setWrap(ed.view.wrap, ed.view.wrapWidth)
-			d.prepare(true)
+			d.prepare()
 			ed.layout(r.W, r.H, p.Scale())
+			d.rebuildIfMoved()
 		})
 		root.Children(func() {
 			ed := d.eds[1].build(c, d.New, o)
@@ -330,7 +336,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 		for i := range d.eds {
 			d.eds[i].layout(w, r.H, p.Scale())
 		}
-		d.prepare(true)
+		d.prepare()
 		for i := range d.eds {
 			d.eds[i].layout(w, r.H, p.Scale())
 		}
@@ -347,6 +353,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 				d.scroll.set(ed0.scrollY)
 			}
 		}
+		d.rebuildIfMoved()
 	})
 	row.Children(func() {
 		for i, b := range []*Buffer{d.Old, d.New} {
@@ -447,4 +454,32 @@ func (d *DiffState) activeHunk() int {
 func isDark(c ui.Color) bool {
 	l := 0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)
 	return l < 128
+}
+
+// diffGeom is what places the elements a diff view builds over its lines,
+// as its separators, which the view builds from the last frame's layout:
+// the blocks, the wraps of the lines, the height and the scroll.
+type diffGeom struct {
+	blocks         int
+	wrapsA, wrapsB uint64
+	total, scroll  float64
+}
+
+func (d *DiffState) geom() diffGeom {
+	a := &d.eds[0].view
+	if d.Layout == DiffUnified {
+		a = &d.oldView
+	}
+	b := &d.eds[1]
+	return diffGeom{d.blocksV, a.heights.wraps.version, b.view.heights.wraps.version, b.view.heights.total(), b.scrollY}
+}
+
+// rebuildIfMoved asks for the view to be built again when laying it out
+// for painting moved what its elements were built for, as expanding
+// lines from a separator's button does: else the separator stays until
+// something else builds the view, as the pointer moving.
+func (d *DiffState) rebuildIfMoved() {
+	if d.geom() != d.built {
+		d.eds[1].services.Invalidate()
+	}
 }
