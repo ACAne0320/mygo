@@ -259,7 +259,10 @@ app.code.SetDiagnostics(buf.Version(), app.lsp.Diagnostics())
   and documentation; Enter or Tab inserts the one chosen.
 - `OnHover` asks what to show as the pointer rests on the text, or for
   Cmd+K Cmd+I at the caret. `ShowHover` shows text in a popover over the
-  range, or what a function builds there.
+  range, or what a function builds there. The pointer can go into the
+  hover, which stays while it is there, to select and copy its text; the
+  hover goes a moment after the pointer leaves the text and the hover,
+  and Escape closes it.
 - `SetDiagnostics` underlines problems with wavy lines of their severity,
   shows their messages in the hover and marks them on the scroll bar. The
   version is the buffer's the diagnostics are of: the editor moves them
@@ -292,8 +295,9 @@ parts the app can build itself, as it styles ui's
 `RenderCompletions` and `RenderHover` are each given the element the
 editor places (a toolbar over its top right corner, a bar at its top, a
 list below the caret, a card above the text hovered), which keeps the
-keyboard in the editor and the presses from the text under it, and a
-handle to what the part shows and does. Style the element and build its
+presses from the text under it and the keyboard where the part needs it
+(in the editor while the completions show, in the hover as its text is
+selected), and a handle to what the part shows and does. Style the element and build its
 content; its position can change too. The editor's own looks are
 `DefaultFindBar`, `DefaultGoToLine`, `DefaultCompletions` and
 `DefaultHover`, which a render function can call and then restyle.

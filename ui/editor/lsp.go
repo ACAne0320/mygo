@@ -313,14 +313,35 @@ type hover struct {
 	// byPointer marks a hover the resting pointer asked for, which goes
 	// as the pointer leaves, rather than the keyboard.
 	byPointer bool
+	// hideAt is when the hover goes, the pointer having left the text
+	// hovered, unless it goes into the hover first; focused reports the
+	// keyboard in the hover, as its text is selected and copied, which
+	// keeps it.
+	hideAt  time.Time
+	focused bool
 }
+
+// hoverHideDelay is how long a hover stays once the pointer has left the
+// text hovered, for the pointer to go into it, as VS Code's
+// editor.hover.hidingDelay.
+const hoverHideDelay = 300 * time.Millisecond
 
 func (h *hover) open() bool { return h.shown }
 
 func (h *hover) close() {
 	h.shown, h.build, h.text, h.diags, h.byPointer = false, nil, "", nil, false
+	h.hideAt, h.focused = time.Time{}, false
 	h.asked = -1
 	h.pending = false
+}
+
+// closeHover closes the hover, and gives the keyboard back to the editor
+// when the hover had it.
+func (ed *editor) closeHover() {
+	if ed.hover.focused {
+		ed.refocus = true
+	}
+	ed.hover.close()
 }
 
 // requestHover asks the app about the text at off.

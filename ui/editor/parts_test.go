@@ -209,6 +209,14 @@ func TestCodeEditorHoverLeave(t *testing.T) {
 	}
 	tt.Move(100, 10)
 	tt.Frame()
+	if !st.ed.hover.shown {
+		t.Fatal("the hover went at once as the pointer left the editor, not after a grace")
+	}
+	graceOver := func() {
+		st.ed.hover.hideAt = time.Now().Add(-time.Millisecond)
+		tt.Frame()
+	}
+	graceOver()
 	if st.ed.hover.shown {
 		t.Fatal("the hover stayed after the pointer left the editor")
 	}
@@ -217,5 +225,51 @@ func TestCodeEditorHoverLeave(t *testing.T) {
 	tt.Frame()
 	if !st.ed.hover.shown {
 		t.Fatal("the keyboard's hover closed with the pointer outside")
+	}
+}
+
+// TestCodeEditorHoverInteractive checks that the pointer can go from the
+// text into its hover, which stays, and select and copy its text, and
+// that Escape closes it and gives the keyboard back to the editor.
+func TestCodeEditorHoverInteractive(t *testing.T) {
+	st := &State{Buffer: NewBuffer("first line\nsecond line\nfoo := bar()\n")}
+	st.OnHover = func(r HoverRequest) {
+		st.ShowHover(r.Offset, r.Offset+3, "func bar() int", nil)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { View(c, st).Fill().AutoFocus() }, 600, 400)
+	tt.Frame()
+	ed := &st.ed
+	y := float32(ed.view.heights.geometry(2).rows-ed.scrollY) + ed.view.lineHeight/2
+	tt.Move(ed.textX+80, y)
+	ed.hover.restAt = time.Now().Add(-time.Hour)
+	tt.Frame()
+	r, ok := tt.Find("func bar() int")
+	if !ok {
+		t.Fatalf("no hover: %q", tt.Texts())
+	}
+	// On the way up, the pointer crosses the line above, then rests in
+	// the hover past the grace.
+	tt.Move(ed.textX+80, y-ed.view.lineHeight)
+	tt.Frame()
+	tt.Move(r.X+4, r.Y+r.H/2)
+	tt.Frame()
+	ed.hover.hideAt = time.Now().Add(-time.Millisecond)
+	tt.Frame()
+	if !ed.hover.shown {
+		t.Fatal("the hover went as the pointer went into it")
+	}
+	// Its text selects and copies.
+	tt.Press(r.X+1, r.Y+r.H/2)
+	tt.Move(r.X+r.W-1, r.Y+r.H/2)
+	tt.Release(r.X+r.W-1, r.Y+r.H/2)
+	tt.Key(ui.Cmd, ui.KeyC)
+	if got := tt.Clipboard(); got != "func bar() int" {
+		t.Fatalf("copied %q from the hover", got)
+	}
+	// Escape closes it, and the editor has the keyboard again.
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if ed.hover.shown || !st.Focused() {
+		t.Fatalf("after Escape: hover shown %v, editor focused %v", ed.hover.shown, st.Focused())
 	}
 }

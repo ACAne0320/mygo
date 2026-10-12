@@ -136,10 +136,24 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 			ed.buildHover(c, hoverAnchor)
 		}
 	})
-	// Once the popover has said whether the pointer is in it.
-	if outside && h.shown && h.byPointer && !h.over {
-		h.close()
-		c.Invalidate()
+	// Once the hover has said whether the pointer or the keyboard is in
+	// it: the hover goes a grace after the pointer left the text hovered,
+	// or the editor, unless it went into the hover.
+	if h.shown {
+		switch {
+		case h.over || h.focused:
+			h.hideAt = time.Time{}
+		case outside && h.byPointer && h.hideAt.IsZero():
+			h.hideAt = c.Now().Add(hoverHideDelay)
+		}
+		if !h.hideAt.IsZero() {
+			if wait := h.hideAt.Sub(c.Now()); wait > 0 {
+				c.After(wait)
+			} else {
+				ed.closeHover()
+				c.Invalidate()
+			}
+		}
 	}
 	ed.needsBuild = false
 	return e

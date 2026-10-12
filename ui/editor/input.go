@@ -327,18 +327,25 @@ func (ed *editor) pointerMove(ev ui.InputEvent) bool {
 		ed.hoverLine = line
 		changed = true
 	}
-	if ed.regionAt(ev.X, ev.Y) == regionText && (ed.o.onHover != nil || len(ed.diags) > 0) {
+	h := &ed.hover
+	off := -1
+	if ed.regionAt(ev.X, ev.Y) == regionText {
 		cx, cy := ed.toContent(ev.X, ev.Y)
-		off := ed.offsetAt(cx, cy)
-		h := &ed.hover
-		if h.shown && (off < h.start || off > h.end) && !h.over {
-			h.close()
+		off = ed.offsetAt(cx, cy)
+	}
+	// Off the text hovered, the hover goes after a grace, so that the
+	// pointer can go into it, as the build sees (hideAt).
+	if h.shown {
+		if off >= 0 && off >= h.start && off <= h.end {
+			h.hideAt = time.Time{}
+		} else if h.hideAt.IsZero() {
+			h.hideAt = time.Now().Add(hoverHideDelay)
 			changed = true
 		}
-		if off != h.restOff {
-			h.restOff, h.restAt, h.pending = off, time.Now(), true
-			changed = true
-		}
+	}
+	if off >= 0 && (ed.o.onHover != nil || len(ed.diags) > 0) && off != h.restOff {
+		h.restOff, h.restAt, h.pending = off, time.Now(), true
+		changed = true
 	}
 	return changed
 }

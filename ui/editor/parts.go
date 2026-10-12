@@ -488,12 +488,12 @@ func (h *HoverCard) Theme() *Theme { return h.ed.theme }
 
 // DefaultHover builds the editor's own hover into panel, as Zed's: the
 // diagnostics with bars of their severity's color, then the text in the
-// editor's font and what the app builds.
+// editor's font and what the app builds, all of it selectable.
 func DefaultHover(c *ui.Context, panel ui.Element, h *HoverCard) {
 	t := c.Theme()
 	ct := h.Theme()
 	panel.Background(t.Surface).Border(1, t.Border).Radius(t.Radius).Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.2)).
-		Padding(t.Space(2)).Gap(t.Space(1.5)).MaxWidth(t.Space(150)).Margin(0, 0, t.Space(1), 0)
+		Padding(t.Space(2)).Gap(t.Space(1.5)).MaxWidth(t.Space(150)).Margin(0, 0, t.Space(1), 0).Selectable()
 	panel.Children(func() {
 		for _, d := range h.Diagnostics() {
 			ui.Row(c).Gap(t.Space(1.5)).Children(func() {
@@ -506,7 +506,7 @@ func DefaultHover(c *ui.Context, panel ui.Element, h *HoverCard) {
 			})
 		}
 		if text := h.Text(); text != "" {
-			ui.Text(c, text).Font(h.Font().Family).FontSize(h.Font().Size).TextColor(ct.Text).Selectable()
+			ui.Text(c, text).Font(h.Font().Family).FontSize(h.Font().Size).TextColor(ct.Text)
 		}
 		h.Content()
 	})
@@ -520,9 +520,14 @@ func (ed *editor) buildHover(c *ui.Context, anchor ui.Element) {
 		return
 	}
 	ui.Overlay(c, func() {
+		// The hover takes the keyboard as it is pressed, for its text to
+		// be selected and copied; Escape gives it back to the editor.
 		panel := ui.Box(c).Key("code hover").AttachTo(anchor, ui.AnchorTopLeft, ui.AnchorBottomLeft).
-			Role(ui.RoleTooltip).KeepFocus().HandleInput(shield)
-		h.over = panel.Hovered()
+			Role(ui.RoleTooltip).HandleInput(shield)
+		h.over, h.focused = panel.Hovered(), panel.FocusWithin()
+		if panel.Shortcut(0, ui.KeyEscape) {
+			ed.closeHover()
+		}
 		render := ed.o.renderHover
 		if render == nil {
 			render = DefaultHover
