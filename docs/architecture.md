@@ -97,9 +97,10 @@ framework safely. Read it before changing anything under `internal/`.
 ├── plugins/            official plugins, each a Go package and its npm
 │                       package (@mygo-plugins/<name>) side by side: fetch,
 │                       websocket, sqlite; and Go only: updater, the update window,
-│                       a web page or native UI (updater/native), and
+│                       a web page or native UI (updater/native),
 │                       terminal, a view of native UI running programs with
-│                       libghostty-vt
+│                       libghostty-vt, glass, and game, what games need
+│                       beyond what apps do (game/gamepad)
 ├── ui/                 native UI: views, layout, widgets, text editing, Tester;
 │                       ui/chart: charts without a look, on ui's public API;
 │                       ui/editor: the code editor and the diff viewer
@@ -108,9 +109,9 @@ framework safely. Read it before changing anything under `internal/`.
 │                       audio/vorbis and audio/mp3 decode Ogg Vorbis and MP3
 ├── cmd/mygo/           the CLI: init, generate, dev, build, doctor
 ├── examples/           hello, todo, frameless, native; counter-native, vibrancy,
-│                       effort-slider, flyout, menubar-flyout, piano,
-│                       code-editor and gallery (native UI); webview (web
-│                       views in native UI)
+│                       effort-slider, flyout, menubar-flyout, piano, farm
+│                       and mayoi (games), code-editor and gallery (native
+│                       UI); webview (web views in native UI)
 ├── docs/               the user guides, the official plugins' pages
 │                       (plugins/), and this architecture guide
 └── website/            the website, with these docs: TanStack Start, prerendered
@@ -981,6 +982,39 @@ build` like mygo-runtime and released with the same version.
     The CLI puts them into apps
     (see the CLI's resources); other programs download theirs into the
     user's cache once, which packaged apps never do.
+- **game** has what games need beyond what apps do, opt-in, out of core
+  `ui`, on its public API only. `View` is a focusable box that keeps its
+  loop in `ui.Local`: its input handler gathers keys (by `PhysicalKey`),
+  buttons and wheel into the `Input` of the next step, and its draw
+  function asks for the next frame (`AnimationFrame`), adds the time since
+  the last frame (`Painter.Now`, at most a quarter of a second) and runs
+  the steps it covers before `Draw`. `Camera` is a `ui.Transform`, snapped
+  to device pixels when unturned.
+  Its package `gamepad`, like `audio`, stands apart from windows and the
+  main thread. One mutex guards the pads. `Pads` asks the platform's `scan` for
+  the devices connected at most once a second, handing it the devices it
+  has so that it reuses them, and a device that is gone, from a scan or
+  when read, disconnects its pad. `State` reads a device on the calling
+  goroutine into the standard layout (`State.Buttons` in the W3C's order,
+  `Axes` with y down):
+  - macOS: GameController.framework through purego's objc: `GCController`
+    `controllers` with an `extendedGamepad`, each element's `value` read
+    inside an autorelease pool, after `respondsToSelector:` for the buttons
+    older systems lack. The framework finds controllers on the main run
+    loop.
+  - Linux: evdev, opened non-blocking where `EVIOCGBIT` shows `BTN_SOUTH`;
+    reading drains the events waiting into key and axis arrays, with axes
+    scaled by `EVIOCGABS`'s range. Xbox controllers (Microsoft's and Valve's
+    vendor IDs, or the `xpad` driver) report X and Y under BTN_NORTH's and
+    BTN_WEST's codes, which are swapped back.
+  - Windows: XInput's four slots, through `XInputGetStateEx` (ordinal 100)
+    for the Guide button where it exists. Empty slots, slow to ask, are
+    asked only by scans.
+  - Browsers: `navigator.getGamepads()` by index, the standard mapping
+    matching the package's order.
+  Tests replace `scanDevices` with fake devices; on Linux, `TestEvdev`
+  (`MYGO_UINPUT=1`) makes uinput pads in the test container, and on macOS
+  `TestGameController` reads a controller from `controllerWithExtendedGamepad`.
 - **glass** is Liquid Glass for native UI, as macOS 26 and later draw it:
   `glass.Glass`, a `ui.Material` (interactive glass builds with its
   element, following its press with `Animate`, and paints itself grown
@@ -2425,6 +2459,21 @@ either.
   backdrop bound for the effect. Each renderer draws scenes offscreen for
   the tests of packages defining effects (`RenderOffscreen`,
   `NewOffscreen`).
+- **Canvases** (`scene.NewCanvas`, `ui.Canvas`) are images drawn from a
+  scene of their own. `Canvas.Draw` paints into its scene with a painter
+  of scale 1 sharing the window's atlases, and lists it in the frame's
+  `Scene.Canvases`, inner canvases first as they finish. Before a frame,
+  each renderer draws the canvases it lists or shows whose version its
+  texture does not hold (`Scene.EachCanvas`, those a canvas shows before
+  it), each with a builder of its own, into a texture in the frame's
+  format before effects: Metal into a BGRA8 render target in the frame's
+  command buffer, Direct3D 11 into a BGRA render target view (the dynamic
+  instance buffer, mapped with discard, serves all), OpenGL into a
+  framebuffer object, whose rows go up, so that image instances showing
+  it flip their texture coordinates (the samplers take source rectangles
+  either way round). A canvas's texture lives as long as the canvas
+  (`weak.Pointer`), not drawn again when shown. The CPU renderer draws
+  canvases into their `Pix` (`PixVersion`).
   Near square corners, coverage is exact, the area of a pixel
   inside the box, so lines thinner than a pixel cover as much as they
   should, as text decorations need. A fill's border widths travel in its
@@ -3118,3 +3167,4 @@ which npm allows only for packages that exist: the first release uses an
 | native UI rendering | Metal, into a CAMetalLayer presenting as soon as drawn, or with the Core Animation transaction for frames that resize it or show web views | OpenGL 3.3 or ES 3.0 in the GtkGLArea's render signal; on the CPU, painted with cairo, where OpenGL runs on the CPU | Direct3D 11 (WARP without a GPU), flip-model swap chain |
 | web views in native UI | WKWebView in a clip view under the surface; `hitTest:` lets the pointer through | WebKitWebView in a `GtkLayout` under the area in a `GtkOverlay`; an input shape lets the pointer through | WebView2 composition controller in a DirectComposition target under the frames'; the surface sends it the mouse |
 | audio output | Audio Queue on the default output | PulseAudio simple API (PipeWire too), else ALSA `default` | WASAPI shared mode, reopened when the default output changes |
+| gamepads | GameController.framework, extended gamepad profile | evdev, the kernel's gamepad layout, Xbox's X and Y swapped back | XInput, four slots, Guide by `XInputGetStateEx` |
