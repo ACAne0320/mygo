@@ -138,6 +138,9 @@ type editor struct {
 	pointer    ui.Point
 	pointerIn  bool
 	hoverLine  int
+	// region is the part of the editor under the pointer, which its
+	// cursor and the scroll bars' highlight show.
+	region     region
 	scrollbar  scrollbarDrag
 	frameNow   time.Time
 	needsBuild bool

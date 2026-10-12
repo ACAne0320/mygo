@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -123,9 +122,7 @@ func (ed *editor) paint(p *ui.Painter, r ui.Rect) {
 		ed.paintLines(p, r, &f)
 	})
 	ed.paintGutter(p, r, &f)
-	if !ed.o.fitContent && !ed.o.noScrollbar {
-		ed.paintScrollbars(p, r, &f)
-	}
+	ed.paintScrollbars(p, r, &f)
 	if v.approx || more {
 		p.AnimationFrame()
 	}
@@ -661,11 +658,11 @@ func (ed *editor) paintScrollbars(p *ui.Painter, r ui.Rect, f *frame) {
 	v := &ed.view
 	ct := ed.theme
 	t := p.Theme()
-	total := v.heights.total()
-	if total > float64(ed.viewH) || ed.o.scrollPastEnd && total > float64(v.lineHeight) {
+	vertical, horizontal := ed.scrollbars()
+	if vertical {
 		x := r.X + r.W - scrollbarWidth
 		track := ui.Rect{X: x, Y: r.Y, W: scrollbarWidth, H: r.H}
-		hovered := ed.pointerIn && ed.pointer.X >= r.W-scrollbarWidth*2
+		hovered := ed.pointerIn && ed.region == regionVScroll
 		if hovered || ed.scrollbar.active {
 			p.Fill(track, t.Scrollbar.Alpha(0.15), 0)
 		}
@@ -741,15 +738,13 @@ func (ed *editor) paintScrollbars(p *ui.Painter, r ui.Rect, f *frame) {
 		}
 		p.Fill(thumb, t.Scrollbar.Alpha(alpha), (scrollbarWidth-4)/2)
 	}
-	if !v.wrap && v.maxLine > r.W-ed.textX-scrollbarWidth {
+	if horizontal {
 		t0, t1 := ed.thumb(true)
 		y := r.Y + r.H - scrollbarWidth
 		alpha := float32(0.4)
-		if ed.pointerIn && ed.pointer.Y >= ed.viewH-scrollbarWidth*2 || ed.scrollbar.active {
+		if ed.pointerIn && ed.region == regionHScroll || ed.scrollbar.active {
 			alpha = 0.9
 		}
 		p.Fill(ui.Rect{X: r.X + ed.textX + t0, Y: y + 2, W: t1 - t0, H: scrollbarWidth - 4}, t.Scrollbar.Alpha(alpha), (scrollbarWidth-4)/2)
 	}
 }
-
-var _ = utf8.RuneLen

@@ -57,7 +57,7 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 		e.HandleTextInput(ed)
 	}
 	e.HandleInput(ed.input)
-	switch ed.regionAt(ed.pointer.X, ed.pointer.Y) {
+	switch ed.region {
 	case regionText:
 		e.Cursor(ui.CursorText)
 	default:

@@ -119,11 +119,11 @@ const (
 )
 
 func (ed *editor) regionAt(x, y float32) region {
-	w, h := ed.r.W, ed.viewH
-	if !ed.o.noScrollbar && !ed.o.fitContent && x >= w-scrollbarWidth && ed.view.heights.total() > float64(h) {
+	vertical, horizontal := ed.scrollbars()
+	if vertical && x >= ed.r.W-scrollbarWidth {
 		return regionVScroll
 	}
-	if !ed.view.wrap && y >= h-scrollbarWidth && ed.view.maxLine > w-ed.textX {
+	if horizontal && y >= ed.viewH-scrollbarWidth {
 		return regionHScroll
 	}
 	if x < ed.gutterW {
@@ -134,6 +134,7 @@ func (ed *editor) regionAt(x, y float32) region {
 
 func (ed *editor) pointerDown(ev ui.InputEvent) bool {
 	ed.pointer, ed.pointerIn = ui.Point{X: ev.X, Y: ev.Y}, true
+	ed.region = ed.regionAt(ev.X, ev.Y)
 	ed.hover.close()
 	if ev.Button != 0 {
 		// The secondary button keeps a selection under it for the menu.
@@ -149,7 +150,7 @@ func (ed *editor) pointerDown(ev ui.InputEvent) bool {
 		}
 		return false
 	}
-	switch ed.regionAt(ev.X, ev.Y) {
+	switch ed.region {
 	case regionVScroll:
 		return ed.scrollbarPress(ev, false)
 	case regionHScroll:
@@ -310,8 +311,13 @@ func (ed *editor) pointerMove(ev ui.InputEvent) bool {
 		ed.extendGesture(ed.offsetAt(cx, cy))
 		return true
 	}
-	// Hovering: a line's gutter, and resting on text for the hover.
+	// Hovering: the region, which the cursor shows, a line's gutter, and
+	// resting on text for the hover.
 	changed := false
+	if r := ed.regionAt(ev.X, ev.Y); r != ed.region {
+		ed.region = r
+		changed = true
+	}
 	line := -1
 	if ed.regionAt(ev.X, ev.Y) == regionGutter || ed.o.decor != nil {
 		_, cy := ed.toContent(ev.X, ev.Y)
@@ -358,6 +364,17 @@ func (ed *editor) wheel(ev ui.InputEvent) bool {
 		ed.extendGesture(ed.offsetAt(cx, cy))
 	}
 	return moved
+}
+
+// scrollbars reports which scroll bars the editor shows, and takes
+// presses on: the vertical one while it scrolls, as it does past the end
+// of a short text, and the horizontal one while a line is wider than the
+// text area.
+func (ed *editor) scrollbars() (vertical, horizontal bool) {
+	if ed.o.noScrollbar || ed.o.fitContent {
+		return false, false
+	}
+	return ed.scrollMax() > 0, !ed.view.wrap && ed.maxScrollX() > 0
 }
 
 func (ed *editor) maxScrollX() float32 {

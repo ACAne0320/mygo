@@ -166,6 +166,29 @@ func TestCodeEditorOutdent(t *testing.T) {
 	ct.want("if x\n  y\nelse\n  z\nend|")
 }
 
+// TestCodeEditorScrollbar checks that the scroll bar of a text shorter
+// than the editor, which scrolls past its end, takes the pointer: an
+// arrow over it, and dragging it scrolls rather than selects.
+func TestCodeEditorScrollbar(t *testing.T) {
+	ct := newEditorTest(t, "go", "|package main\n\nfunc main() {}\n")
+	x := float32(600 - scrollbarWidth/2)
+	ct.tt.Move(300, 5)
+	if c := ct.tt.Cursor(); c != ui.CursorText {
+		t.Fatalf("cursor over the text %v, want the I-beam", c)
+	}
+	ct.tt.Move(x, 5)
+	if c := ct.tt.Cursor(); c != ui.CursorDefault {
+		t.Fatalf("cursor over the scroll bar %v, want the arrow", c)
+	}
+	ct.tt.Press(x, 5)
+	ct.tt.Move(x, 300)
+	ct.tt.Release(x, 300)
+	if ct.st.ed.scrollY <= 0 {
+		t.Fatal("dragging the scroll bar did not scroll")
+	}
+	ct.want("|package main\n\nfunc main() {}\n")
+}
+
 func TestCodeEditorMultiCursor(t *testing.T) {
 	ct := newEditorTest(t, "go", "foo := 1\nbar := foo\nfoo++")
 	ct.st.Select(0, 0)
