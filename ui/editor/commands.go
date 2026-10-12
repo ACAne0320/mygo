@@ -359,6 +359,7 @@ func (ed *editor) run(cmd Command) bool {
 	case ShowCompletions:
 		return ed.requestCompletions(true)
 	case ShowHover:
+		ed.hover.byPointer = false
 		return ed.requestHover(ed.primary().head)
 	case NextHunk, PreviousHunk:
 		return ed.gotoHunk(direction(cmd == PreviousHunk))

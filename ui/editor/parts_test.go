@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -169,5 +170,52 @@ func TestCodeDiffParts(t *testing.T) {
 	}
 	if len(commented) != 1 || commented[0] != (DiffLineRange{Side: DiffOld, Start: 28, End: 28}) {
 		t.Fatalf("gutter button reported %+v", commented)
+	}
+}
+
+// TestCodeEditorHoverLeave checks that the pointer passing over words on
+// its way out of the editor asks for no hover, and that leaving closes
+// the hover it asked for, as in examples/code-editor with its sidebar.
+func TestCodeEditorHoverLeave(t *testing.T) {
+	st := &State{Buffer: NewBuffer("// Package server serves greetings.\nfunc main() {}\n")}
+	var asked []int
+	st.OnHover = func(r HoverRequest) {
+		asked = append(asked, r.Offset)
+		st.ShowHover(r.Offset, r.Offset+1, "word", nil)
+	}
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+			ui.Box(c).Width(200).Label("Sidebar")
+			View(c, st).Grow(1)
+		})
+	}, 800, 400)
+	tt.Frame()
+	rest := func() {
+		st.ed.hover.restAt = time.Now().Add(-time.Hour)
+		tt.Frame()
+	}
+	// Over a word, then out to the sidebar before resting: no hover.
+	tt.Move(400, 10)
+	tt.Move(100, 10)
+	rest()
+	if len(asked) != 0 || st.ed.hover.shown {
+		t.Fatalf("hover asked for %v after the pointer left", asked)
+	}
+	// Resting on a word asks; leaving closes the hover.
+	tt.Move(400, 10)
+	rest()
+	if len(asked) != 1 || !st.ed.hover.shown {
+		t.Fatalf("no hover after resting: asked %v", asked)
+	}
+	tt.Move(100, 10)
+	tt.Frame()
+	if st.ed.hover.shown {
+		t.Fatal("the hover stayed after the pointer left the editor")
+	}
+	// A hover asked for from the keyboard stays.
+	st.Run(ShowHover)
+	tt.Frame()
+	if !st.ed.hover.shown {
+		t.Fatal("the keyboard's hover closed with the pointer outside")
 	}
 }

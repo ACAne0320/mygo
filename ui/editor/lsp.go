@@ -310,12 +310,15 @@ type hover struct {
 	pending bool
 	diags   []Diagnostic
 	over    bool // the pointer is over the popover
+	// byPointer marks a hover the resting pointer asked for, which goes
+	// as the pointer leaves, rather than the keyboard.
+	byPointer bool
 }
 
 func (h *hover) open() bool { return h.shown }
 
 func (h *hover) close() {
-	h.shown, h.build, h.text, h.diags = false, nil, "", nil
+	h.shown, h.build, h.text, h.diags, h.byPointer = false, nil, "", nil, false
 	h.asked = -1
 	h.pending = false
 }

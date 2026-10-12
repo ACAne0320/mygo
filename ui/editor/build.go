@@ -83,14 +83,24 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 			ed.doReveal()
 		}
 	}
-	// Hovering: ask what the text under the resting pointer is.
+	// Hovering: ask what the text under the resting pointer is. The
+	// editor hears no move once the pointer has left it, so its hover
+	// tells: what the pointer passed over on its way out asks nothing, and
+	// a hover it asked for goes, unless the pointer went into it.
 	h := &ed.hover
+	outside := !e.Hovered() && !ed.gesture.active && !ed.scrollbar.active
+	if outside && ed.pointerIn {
+		ed.pointerIn = false
+		ed.hoverLine = -1
+		h.pending, h.restOff = false, -1
+	}
 	if h.pending && ed.pointerIn && !ed.gesture.active {
 		if wait := 600*time.Millisecond - c.Now().Sub(h.restAt); wait > 0 {
 			c.After(wait)
 		} else {
 			h.pending = false
 			ed.requestHover(h.restOff)
+			h.byPointer = true
 		}
 	}
 	e.Children(func() {
@@ -126,6 +136,11 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 			ed.buildHover(c, hoverAnchor)
 		}
 	})
+	// Once the popover has said whether the pointer is in it.
+	if outside && h.shown && h.byPointer && !h.over {
+		h.close()
+		c.Invalidate()
+	}
 	ed.needsBuild = false
 	return e
 }
