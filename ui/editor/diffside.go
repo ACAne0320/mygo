@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/egoist/mygo/internal/text"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -108,11 +107,11 @@ func (s *diffSide) number(line int) int {
 	return line + 1
 }
 
-// paintBlock paints a block: a filler of rows a side lacks, hatched; the
-// separator of collapsed lines; or the deleted lines of a unified view.
+// paintBlock paints a block: a filler of rows a side lacks, hatched, or
+// the deleted lines of a unified view. Separators leave their room to
+// the elements over it (buildSeparators).
 func (s *diffSide) paintBlock(p *ui.Painter, ed *editor, b *block, r ui.Rect) {
 	ct := ed.theme
-	t := p.Theme()
 	switch b.kind {
 	case blockSpacer:
 		if b.from == 0 {
@@ -126,108 +125,9 @@ func (s *diffSide) paintBlock(p *ui.Painter, ed *editor, b *block, r ui.Rect) {
 				p.Line(x, r.Y+r.H, x+r.H, r.Y, 1, c)
 			}
 		})
-	case blockSeparator:
-		s.paintSeparator(p, ed, b, r, t)
-	case blockHeader:
-		if s.d.Layout == DiffSplit && !s.old {
-			p.Fill(ui.Rect{X: r.X, Y: r.Y + 4, W: r.W - 4, H: r.H - 8}, mixLab(ct.Background, ct.Text, 0.06), 6)
-			return
-		}
-		bar := ui.Rect{X: r.X + 4, Y: r.Y + 4, W: r.W - 8, H: r.H - 8}
-		if s.d.Layout == DiffSplit {
-			bar.W = r.W - 4
-		}
-		p.Fill(bar, mixLab(ct.Background, ct.Text, 0.06), 6)
-		if h, ok := b.id.(string); ok {
-			l := text.Shared().Layout(text.Params{Text: h, Style: styleOf(ui.Font{Family: ed.view.font.Family, Size: ed.view.font.Size - 1}), NoWrap: true})
-			paintUILayout(p, &ed.view, l, bar.X+10, bar.Y+bar.H/2-ed.view.lineHeight/2, t.TextMuted)
-		}
 	case blockDeleted:
 		s.paintDeleted(p, ed, b, r)
 	}
-}
-
-func (s *diffSide) paintSeparator(p *ui.Painter, ed *editor, b *block, r ui.Rect, t *ui.Theme) {
-	ct := ed.theme
-	bar := ui.Rect{X: r.X + 4, Y: r.Y + 4, W: r.W - 8, H: r.H - 8}
-	split := s.d.Layout == DiffSplit
-	switch {
-	case split && s.old:
-		bar.W = r.W - 4
-	case split:
-		bar.X, bar.W = r.X, r.W-4
-	}
-	p.Fill(bar, mixLab(ct.Background, ct.Text, 0.06), 6)
-	n := b.to - b.from
-	label := fmt.Sprintf("%d unmodified line%s", n, map[bool]string{true: "", false: "s"}[n == 1])
-	if split && !s.old {
-		return
-	}
-	v := &ed.view
-	cy := bar.Y + bar.H/2
-	// The buttons: one expanding both ways when the lines are few, else
-	// down from the change above and up from the change below.
-	x := bar.X + 6
-	g := s.gapOf(b)
-	icon := func(dir int) {
-		cx := x + 8
-		d := float32(3.5)
-		var path ui.Path
-		switch dir {
-		case 1:
-			path.MoveTo(cx-d, cy-d/2).LineTo(cx, cy+d/2).LineTo(cx+d, cy-d/2)
-		case -1:
-			path.MoveTo(cx-d, cy+d/2).LineTo(cx, cy-d/2).LineTo(cx+d, cy+d/2)
-		default:
-			path.MoveTo(cx-d, cy-2).LineTo(cx, cy-2-d).LineTo(cx+d, cy-2)
-			path.MoveTo(cx-d, cy+2).LineTo(cx, cy+2+d).LineTo(cx+d, cy+2)
-		}
-		p.StrokePath(&path, 1.5, t.TextMuted)
-		x += 20
-	}
-	{
-		switch {
-		case n <= s.d.expansionLines() || g.before || g.after:
-			switch {
-			case g.before:
-				icon(-1)
-			case g.after:
-				icon(1)
-			default:
-				icon(0)
-			}
-		default:
-			icon(1)
-			icon(-1)
-		}
-	}
-	if label != "" {
-		l := text.Shared().Layout(text.Params{Text: label, Style: styleOf(textStyleUI(t)), NoWrap: true})
-		paintUILayout(p, v, l, x+4, cy-v.lineHeight/2, t.TextMuted)
-	}
-}
-
-// gapOf returns the gap a separator collapses.
-func (s *diffSide) gapOf(b *block) diffGap {
-	gs := s.d.gapList
-	if b.hunk >= 0 && b.hunk < len(gs) {
-		return gs[b.hunk]
-	}
-	return diffGap{}
-}
-
-// textStyleUI is the style of the interface's text, for separators.
-func textStyleUI(t *ui.Theme) ui.Font { return ui.Font{Family: t.Font, Size: max(t.FontSize-1, 11)} }
-
-// paintUILayout paints a line of interface text, in its own font,
-// centered on the view's line height.
-func paintUILayout(p *ui.Painter, v *view, lay *text.Layout, x, y float32, c ui.Color) {
-	if lay == nil || len(lay.Lines) == 0 {
-		return
-	}
-	line := lay.Lines[0]
-	baseline := y + (v.lineHeight-(line.Ascent+line.Descent))/2 + line.Ascent
-	p.TextLine(lay, x+line.X, baseline, func(int) ui.Color { return c })
 }
 
 // paintDeleted paints the lines a unified view shows deleted: the old
@@ -314,8 +214,9 @@ func (s *diffSide) paintSign(p *ui.Painter, ed *editor, sign string, x, y float3
 	v.paintRow(p, &lineLayout{disp: sign}, &row, x, y, &cc, func(int, ui.Color) ui.Color { return c })
 }
 
-// blockInput takes presses on separators, which expand them, and on the
-// gutter's numbers and button, which select lines.
+// blockInput takes presses on the numbers of lines, which select them,
+// and on the deleted lines of a unified view. Separators and buttons are
+// elements of their own (buildSeparators, buildBlocks).
 func (s *diffSide) blockInput(ed *editor, b *block, ev ui.InputEvent, r ui.Rect) bool {
 	d := s.d
 	side := DiffNew
@@ -324,28 +225,6 @@ func (s *diffSide) blockInput(ed *editor, b *block, ev ui.InputEvent, r ui.Rect)
 	}
 	if b != nil {
 		switch b.kind {
-		case blockSeparator:
-			if ev.Kind != ui.InputPointerDown {
-				return true
-			}
-			g := s.gapOf(b)
-			n := b.to - b.from
-			x := ev.X - (r.X + 10)
-			all := ev.Mods&ui.Shift != 0 || x > 40 || n <= d.expansionLines()
-			switch {
-			case g.before:
-				d.expand(g.a, -1, all)
-			case g.after:
-				d.expand(g.a, 1, all)
-			case all:
-				d.expand(g.a, 1, true)
-			case x < 20:
-				d.expand(g.a, 1, false)
-			default:
-				d.expand(g.a, -1, false)
-			}
-			ed.needsBuild = true
-			return true
 		case blockDeleted:
 			// Lines of the old text: their numbers select them.
 			if ev.X < ed.gutterW && d.LineSelection && ev.Kind == ui.InputPointerDown {
@@ -364,10 +243,6 @@ func (s *diffSide) blockInput(ed *editor, b *block, ev ui.InputEvent, r ui.Rect)
 	}
 	_, cy := ed.toContent(ev.X, ev.Y)
 	line := ed.view.heights.lineAt(cy)
-	if d.OnGutterButton != nil && ev.X < 20 {
-		d.OnGutterButton(DiffLineRange{Side: side, Start: line, End: line})
-		return true
-	}
 	if d.LineSelection {
 		d.selectLine(side, line, ev.Mods&ui.Shift != 0)
 		return true
@@ -393,7 +268,6 @@ func (s *diffSide) buildBlocks(c *ui.Context, ed *editor) {
 	if s.old {
 		side = DiffOld
 	}
-	t := c.Theme()
 	// Annotations under their lines.
 	if d.RenderAnnotation != nil && len(d.Annotations) > 0 {
 		for _, a := range d.Annotations {
@@ -483,34 +357,30 @@ func (s *diffSide) buildBlocks(c *ui.Context, ed *editor) {
 			if top < y0-float64(v.lineHeight) || top > y1 {
 				continue
 			}
-			i := i
-			bar := ui.Row(c).Key(fmt.Sprint("hunk actions ", i)).Absolute().Right(scrollbarWidth + 6).Top(float32(top-ed.scrollY) + 2).Gap(t.Space(1)).
-				KeepFocus().HandleInput(shield)
-			bar.Children(func() {
-				for _, act := range []struct {
-					label string
-					fn    func(int)
-				}{{"Revert", d.Revert}, {"Keep", d.Accept}} {
-					btn := ui.ButtonBase(c).Padding(0, t.Space(2)).Height(v.lineHeight-4).Radius(t.Radius-2).
-						Background(t.Surface).Border(1, t.Border).Label(act.label + " change")
-					btn.Children(func() { ui.Text(c, act.label).FontSize(max(11, t.FontSize-2)) })
-					if btn.Clicked() {
-						act.fn(i)
-					}
-				}
-			})
+			bar := ui.Row(c).Key(fmt.Sprint("hunk actions ", i)).Absolute().Right(scrollbarWidth + 6).Top(float32(top-ed.scrollY) + 2).
+				Cursor(ui.CursorDefault).KeepFocus().HandleInput(shield)
+			render := d.RenderHunkActions
+			if render == nil {
+				render = DefaultHunkActions
+			}
+			render(c, bar, &DiffHunkActions{Index: i, Hunk: DiffHunk{hk.A0, hk.A1, hk.B0, hk.B1}, d: d})
 		}
 	}
 	// The gutter's button, on the line under the pointer.
 	if d.OnGutterButton != nil && ed.pointerIn && ed.hoverLine >= 0 && ed.hoverLine < v.text.LineCount() && ed.pointer.X < ed.gutterW+40 {
 		g := h.geometry(ed.hoverLine)
 		if !g.hidden {
-			btn := ui.Box(c).Key("gutter button").Absolute().Left(2).Top(float32(g.rows-ed.scrollY)+2).Size(16, v.lineHeight-4).
-				Radius(4).Background(t.Accent).Cursor(ui.CursorPointer).PassThrough()
-			btn.Draw(func(p *ui.Painter, r ui.Rect) {
-				cx, cy := r.X+r.W/2, r.Y+r.H/2
-				p.Line(cx-4, cy, cx+4, cy, 1.5, t.AccentText)
-				p.Line(cx, cy-4, cx, cy+4, 1.5, t.AccentText)
+			line := DiffLineRange{Side: side, Start: ed.hoverLine, End: ed.hoverLine}
+			ui.Box(c).Key("gutter button").Absolute().Left(2).Top(float32(g.rows-ed.scrollY) + 2).HandleInput(shield).Children(func() {
+				btn := ui.ButtonBase(c).Size(16, v.lineHeight-4).Cursor(ui.CursorPointer).KeepFocus()
+				render := d.RenderGutterButton
+				if render == nil {
+					render = DefaultGutterButton
+				}
+				render(c, btn, line)
+				if btn.Clicked() {
+					d.OnGutterButton(line)
+				}
 			})
 		}
 	}

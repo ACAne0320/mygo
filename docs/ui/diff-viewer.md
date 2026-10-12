@@ -73,9 +73,9 @@ keystroke. Cmd+F8 and Shift+Cmd+F8 go to the next and previous changes
 
 - `HunkActions` shows Revert and Keep on the change under the pointer, or
   the caret's: Revert puts the old lines back in `New`, Keep makes the new
-  lines `Old`'s, as an agent's changes are reviewed one at a time. `Revert` and `Accept` do the same
-  from the app; `Hunks` lists the changes, and `Stats` counts the lines
-  added and deleted.
+  lines `Old`'s, as an agent's changes are reviewed one at a time.
+  `Revert` and `Accept` do the same from the app; `Hunks` lists the
+  changes, and `Stats` counts the lines added and deleted.
 - `LineSelection` lets the numbers of lines be clicked, and dragged or
   Shift-clicked, to select lines, which `OnLineSelection` reports and
   `SelectedLines` and `SetSelectedLines` read and set, as a link to lines
@@ -101,6 +101,55 @@ app.diff.RenderAnnotation = func(c *ui.Context, a editor.DiffAnnotation) {
 }
 ```
 
+## Styling
+
+`Theme` colors the diff as it does the [code editor](code-editor.md#themes),
+changed lines included. The parts around the lines are the app's to
+build, as Pierre's diffs render them: `RenderSeparator`,
+`RenderHunkActions` and `RenderGutterButton` are given the element the
+viewer places and what the part shows and does, and the viewer's own
+looks are `DefaultSeparator`, `DefaultHunkActions` and
+`DefaultGutterButton`, which they can call. `RenderFindBar` and
+`RenderGoToLine` build the bars of the sides' editors, as the code
+editor's do.
+
+```go
+app.diff.RenderSeparator = func(c *ui.Context, sep ui.Element, s *editor.DiffSeparator) {
+	sep.Padding(4).Children(func() {
+		if s.Lines == 0 { // a patch's hunk
+			ui.Text(c, s.Header).Font("monospace")
+			return
+		}
+		if ui.Button(c, fmt.Sprintf("Show %d hidden lines", s.Lines)).Clicked() {
+			s.ExpandAll()
+		}
+	})
+}
+app.diff.RenderHunkActions = func(c *ui.Context, bar ui.Element, a *editor.DiffHunkActions) {
+	bar.Gap(4).Children(func() {
+		if ui.Button(c, "Reject").Clicked() {
+			a.Revert()
+		}
+		if ui.PrimaryButton(c, "Accept").Clicked() {
+			a.Keep()
+		}
+	})
+}
+```
+
+- A `DiffSeparator` spans the viewer, both sides of a split one, 32 DIPs
+  high. It collapses `Lines` unchanged lines, which `ExpandUp`,
+  `ExpandDown` and `ExpandAll` show, `Step` lines at a time; `First` and
+  `Last` mark those before the first change and after the last, which
+  expand one way. A patch's hunk has a separator of no lines, with its
+  `Header`.
+- `DiffHunkActions` sit at the top right of the change under the pointer,
+  or the caret's: `Index` and `Hunk` say which, and `Revert` and `Keep`
+  act.
+- The gutter button is a button on the gutter of the line under the
+  pointer, which calls `OnGutterButton` when clicked; its render function
+  gives it a look and a label.
+
 ## Patches
 
 `editor.ParsePatch` reads the files a unified diff changes, as `git diff`
@@ -124,5 +173,7 @@ for _, f := range files {
 ## Accessibility
 
 Assistive technology sees each side as a text field, "Old text" and "New
-text", the old one read only, with its text and selection; Revert and Keep
-are buttons, "Revert change" and "Keep change".
+text", the old one read only, with its text and selection. A separator is
+a group named by the lines it collapses, with buttons expanding them up,
+down or all; Revert and Keep are buttons, "Revert change" and "Keep
+change".

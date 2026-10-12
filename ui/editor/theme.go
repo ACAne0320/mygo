@@ -173,8 +173,9 @@ func (ct *Theme) resolve(t *ui.Theme) *Theme {
 	return &out
 }
 
-// tokenColor returns the color of a kind of token.
-func (ct *Theme) tokenColor(k TokenKind) ui.Color {
+// TokenColor returns the color of a kind of token: its style's, else the
+// text's.
+func (ct *Theme) TokenColor(k TokenKind) ui.Color {
 	if c := ct.Tokens[k].Color; c.A > 0 {
 		return c
 	}

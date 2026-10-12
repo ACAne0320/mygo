@@ -269,7 +269,9 @@ app.code.SetDiagnostics(buf.Version(), app.lsp.Diagnostics())
   suggestion, which Tab accepts, as an AI's.
 - `OnDefinition` is called for Cmd+click and F12 on a word.
 
-## Themes
+## Styling
+
+### Themes
 
 `Theme` colors the editor: its background, text, gutter, selections,
 carets, guides, diagnostics, changes and each kind of token. Colors left
@@ -282,11 +284,66 @@ th.Tokens[editor.TokenKeyword] = editor.TokenStyle{Color: ui.RGB(0xc6, 0x78, 0xd
 app.code.Theme = th
 ```
 
+### Bars and popups
+
+The find bar, the go to line bar, the completions and the hovers are
+parts the app can build itself, as it styles ui's
+[bases](custom-widgets.md): `RenderFindBar`, `RenderGoToLine`,
+`RenderCompletions` and `RenderHover` are each given the element the
+editor places (a toolbar over its top right corner, a bar at its top, a
+list below the caret, a card above the text hovered), which keeps the
+keyboard in the editor and the presses from the text under it, and a
+handle to what the part shows and does. Style the element and build its
+content; its position can change too. The editor's own looks are
+`DefaultFindBar`, `DefaultGoToLine`, `DefaultCompletions` and
+`DefaultHover`, which a render function can call and then restyle.
+
+```go
+app.code.RenderFindBar = func(c *ui.Context, bar ui.Element, f *editor.FindBar) {
+	t := c.Theme()
+	bar.Row().Gap(8).Padding(6).Background(t.Surface).Radius(12).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.2))
+	bar.Children(func() {
+		f.QueryInput(ui.TextInputBase(c, f.Query()).Placeholder("Search").Width(180))
+		ui.Toggle(c, f.Regexp(), ".*").KeepFocus()
+		ui.Text(c, f.Status()).TextColor(t.TextMuted)
+		if ui.Button(c, "Next").KeepFocus().Clicked() {
+			f.Next()
+		}
+	})
+}
+app.code.RenderHover = func(c *ui.Context, panel ui.Element, h *editor.HoverCard) {
+	editor.DefaultHover(c, panel, h) // the editor's look, on another background
+	panel.Background(app.hoverColor)
+}
+```
+
+- `FindBar` binds fields and toggles: `Query` and `Replacement`, and
+  `CaseSensitive`, `WholeWord`, `Regexp` and `InSelection`, are pointers,
+  and the matches follow them as they change. `QueryInput` and
+  `ReplacementInput` give inputs the bar's keys: the query takes the
+  focus as the bar opens, Enter and Shift+Enter go through the matches,
+  Alt+Enter selects them all, Enter and Cmd+Enter in the replacement
+  replace one or all, and Escape closes. `Matches` and `Status` count the
+  matches, and `Next`, `Previous`, `SelectAll`, `Replace`, `ReplaceAll`
+  and `Close` act; `Replacing` says whether the bar replaces too, as
+  Cmd+Alt+F opens it.
+- `GoToLineBar` has `Text` for its field, which `Input` gives the bar's
+  keys, `Cursor`, `LineCount` and `Target` to tell where it goes, and
+  `Go` and `Close`.
+- `CompletionMenu` has the `Items` shown, best first, and the one
+  `Selected`. `Item(i)` makes the row of an item, selected as the arrows
+  move, scrolled into view and inserting the item when clicked; style it
+  and give it content. `Font`, `LineHeight` and `Theme` show code as the
+  editor does, and a `CompletionKind` has an `Icon` and the `Token` whose
+  color tints it.
+- `HoverCard` has the `Diagnostics` of the text hovered, the `Text` the
+  app gave `ShowHover`, and `Content`, which builds what its function
+  builds.
+
 ## Accessibility
 
 Assistive technology sees a multi-line text field, named by `Label`, with
 the text of the buffer and the newest selection, which it moves; the
 completions are a list, and the find bar a toolbar that tells the count
-of matches. Input methods
-compose in the editor as in other text fields, with their candidate
-window at the caret.
+of matches. Input methods compose in the editor as in other text fields,
+with their candidate window at the caret.

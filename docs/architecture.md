@@ -1982,6 +1982,17 @@ either.
     new text, with blocks painting the deleted lines from a view of the
     old one. Unchanged runs collapse into hidden spans under separator
     blocks.
+  - *Parts* (`parts.go`, `diffparts.go`). The bars and popups around the
+    text (find, go to line, completions, hovers) and a diff's separators,
+    actions on changes and gutter button are elements the editor places
+    with the behavior they need, as ui's bases are: `shield` hands presses
+    on to what is inside them rather than to the editor's handler, and
+    `KeepFocus` keeps the typing in the editor. The app's render function
+    fills each, else the exported default, given a handle to the part's
+    state and actions (`FindBar`, `DiffSeparator`, ...), whose values
+    the editor reads back after the build, as a query typed. Separators
+    are built by the diff view across both sides, over the room their
+    blocks leave.
 - **Text selection** (`ui/textselection.go`). `Selectable` on a text
   selects that paragraph; on a container it gives its text descendants
   one selection. The window keeps endpoints as stable element IDs and

@@ -779,7 +779,7 @@ func (v *view) colorsOf(l *lineLayout, out *runColors) {
 	out.ends, out.colors = out.ends[:0], out.colors[:0]
 	for _, t := range l.toks {
 		out.ends = append(out.ends, l.toDisp(t.End, false))
-		out.colors = append(out.colors, v.theme.tokenColor(t.Kind))
+		out.colors = append(out.colors, v.theme.TokenColor(t.Kind))
 	}
 	for i, sg := range l.segs {
 		if sg.kind == segInlay {

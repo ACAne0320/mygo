@@ -296,97 +296,6 @@ func (ed *editor) acceptCompletion() bool {
 	return true
 }
 
-// build shows the completions below the caret.
-func (cc *completions) build(c *ui.Context, ed *editor, anchor ui.Element) {
-	if !cc.open() {
-		return
-	}
-	t := c.Theme()
-	ct := ed.theme
-	ui.Overlay(c, func() {
-		panel := ui.Column(c).Key("code completions").AttachTo(anchor, ui.AnchorBottomLeft, ui.AnchorTopLeft).
-			Background(t.Surface).Border(1, t.Border).Radius(t.Radius).Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.2)).
-			Padding(t.Space(1)).Role(ui.RoleList).Label("Completions").MaxHeight(ed.view.lineHeight*9 + t.Space(2)).MinWidth(t.Space(60)).MaxWidth(t.Space(150))
-		panel.KeepFocus().HandleInput(shield)
-		panel.Children(func() {
-			list := ui.Scroll(c).Key("rows").MaxHeight(ed.view.lineHeight * 9)
-			list.Children(func() {
-				for i, idx := range cc.filtered {
-					if i >= 200 {
-						break
-					}
-					it := cc.items[idx]
-					row := ui.ButtonBase(c).Key(i).Gap(t.Space(2)).AlignItems(ui.Center).Padding(t.Space(0.5), t.Space(1.5)).
-						Radius(t.Radius - 2).Height(ed.view.lineHeight + 2).FocusRing(false)
-					row.Role(ui.RoleListItem).Label(it.Label).Selected(i == cc.selected)
-					if i == cc.selected {
-						row.Background(t.Accent.Alpha(0.18))
-						if cc.scrollTo {
-							row.ScrollIntoView()
-						}
-					}
-					row.Children(func() {
-						ui.Text(c, completionIcon(it.Kind)).Font("monospace").FontSize(ed.view.font.Size - 1).TextColor(ct.tokenColor(completionToken(it.Kind))).Width(t.Space(3))
-						ui.Text(c, it.Label).Font(ed.view.font.Family).FontSize(ed.view.font.Size).TextColor(ct.Text).SingleLine().Shrink(1)
-						if it.Detail != "" {
-							ui.Text(c, it.Detail).FontSize(ed.view.font.Size - 1).TextColor(t.TextMuted).SingleLine().Shrink(1).Grow(1).TextAlign(ui.End)
-						}
-					})
-					if row.Clicked() {
-						cc.selected = i
-						ed.acceptCompletion()
-					}
-				}
-			})
-			cc.scrollTo = false
-			if cc.selected < len(cc.filtered) {
-				if doc := cc.items[cc.filtered[cc.selected]].Documentation; doc != "" {
-					ui.Box(c).Height(1).Background(t.Border).Margin(t.Space(1), 0)
-					ui.Text(c, doc).FontSize(t.FontSize-1).TextColor(t.TextMuted).MaxWidth(t.Space(140)).Padding(t.Space(0.5), t.Space(1.5))
-				}
-			}
-		})
-	})
-}
-
-func completionIcon(k CompletionKind) string {
-	switch k {
-	case CompletionKeyword:
-		return "k"
-	case CompletionFunction, CompletionMethod:
-		return "ƒ"
-	case CompletionVariable:
-		return "x"
-	case CompletionField:
-		return "·"
-	case CompletionType:
-		return "T"
-	case CompletionModule:
-		return "{}"
-	case CompletionConstant:
-		return "π"
-	case CompletionSnippet:
-		return "⌘"
-	}
-	return "≡"
-}
-
-func completionToken(k CompletionKind) TokenKind {
-	switch k {
-	case CompletionKeyword:
-		return TokenKeyword
-	case CompletionFunction, CompletionMethod:
-		return TokenFunction
-	case CompletionField:
-		return TokenProperty
-	case CompletionType, CompletionModule:
-		return TokenType
-	case CompletionConstant:
-		return TokenConstant
-	}
-	return TokenText
-}
-
 // hover is the popover of what the text under the pointer is, and
 // the diagnostics there.
 type hover struct {
@@ -437,41 +346,8 @@ func (ed *editor) diagnosticsAt(off int) []Diagnostic {
 	return out
 }
 
-func (h *hover) buildPopover(c *ui.Context, ed *editor, anchor ui.Element) {
-	if !h.shown || h.build == nil && h.text == "" && len(h.diags) == 0 {
-		return
-	}
-	t := c.Theme()
-	ct := ed.theme
-	ui.Overlay(c, func() {
-		panel := ui.Column(c).Key("code hover").AttachTo(anchor, ui.AnchorTopLeft, ui.AnchorBottomLeft).
-			Background(t.Surface).Border(1, t.Border).Radius(t.Radius).Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.2)).
-			Padding(t.Space(2)).Gap(t.Space(1.5)).MaxWidth(t.Space(150)).Role(ui.RoleTooltip).Margin(0, 0, t.Space(1), 0)
-		panel.KeepFocus().HandleInput(shield)
-		h.over = panel.Hovered()
-		panel.Children(func() {
-			for _, d := range h.diags {
-				col := ct.severityColor(d.Severity)
-				ui.Row(c).Gap(t.Space(1.5)).Children(func() {
-					ui.Box(c).Width(3).Radius(1.5).Background(col).AlignSelf(ui.Stretch)
-					msg := d.Message
-					if d.Source != "" {
-						msg += " (" + d.Source + ")"
-					}
-					ui.Text(c, msg).FontSize(t.FontSize - 1).Shrink(1)
-				})
-			}
-			if h.text != "" {
-				ui.Text(c, h.text).Font(ed.view.font.Family).FontSize(ed.view.font.Size).TextColor(ct.Text).Selectable()
-			}
-			if h.build != nil {
-				h.build(c)
-			}
-		})
-	})
-}
-
-func (ct *Theme) severityColor(s Severity) ui.Color {
+// SeverityColor returns the color of diagnostics of a severity.
+func (ct *Theme) SeverityColor(s Severity) ui.Color {
 	switch s {
 	case SeverityWarning:
 		return ct.Warning

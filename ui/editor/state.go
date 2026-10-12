@@ -89,6 +89,18 @@ type State struct {
 	// bookmarks: a dot of their color.
 	GutterMarks []GutterMark
 
+	// RenderFindBar, RenderGoToLine, RenderCompletions and RenderHover
+	// build the editor's find bar, go to line bar, completions and hovers
+	// in place of its own (DefaultFindBar, DefaultGoToLine,
+	// DefaultCompletions and DefaultHover, which they can call to wrap
+	// them): each is given the element the editor places, as a toolbar
+	// over its top right corner or a list below the caret, to style and
+	// fill, and a handle to what the part shows and does.
+	RenderFindBar     func(c *ui.Context, bar ui.Element, f *FindBar)
+	RenderGoToLine    func(c *ui.Context, bar ui.Element, g *GoToLineBar)
+	RenderCompletions func(c *ui.Context, panel ui.Element, m *CompletionMenu)
+	RenderHover       func(c *ui.Context, panel ui.Element, h *HoverCard)
+
 	ed editor
 }
 
@@ -138,6 +150,8 @@ func (st *State) options() options {
 		placeholder: st.Placeholder, label: st.Label, theme: st.Theme, bindings: st.Bindings, gutterMarks: st.GutterMarks,
 		diffBase: st.DiffBase, onCompletion: st.OnCompletion, onHover: st.OnHover, onDefinition: st.OnDefinition,
 		onGutterClick: st.OnGutterClick, contextMenu: st.ContextMenu, minDigits: 3,
+		renderFindBar: st.RenderFindBar, renderGoToLine: st.RenderGoToLine,
+		renderCompletions: st.RenderCompletions, renderHover: st.RenderHover,
 	}
 }
 

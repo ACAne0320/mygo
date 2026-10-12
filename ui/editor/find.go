@@ -6,9 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
-
-	"github.com/egoist/mygo/ui"
 )
 
 // finder is an editor's find bar and its matches, as Zed's buffer
@@ -25,6 +22,7 @@ type finder struct {
 	inSelection bool
 	scope       []sel
 	focusQuery  bool
+	typed       string // the query as the matches were last chosen for
 	// The matches of the last search, and the text and options it was of.
 	matches  []diffRange
 	current  int
@@ -65,12 +63,37 @@ func (f *finder) show(ed *editor, replace bool) {
 	ed.needsBuild = true
 }
 
+// update searches again when the text, the query or the options
+// changed, and selects the match at or after the caret as the query is
+// typed, as Zed's search does.
+func (f *finder) update(ed *editor) {
+	if f.query != f.typed {
+		f.typed = f.query
+		f.scrollTo = true
+	}
+	f.search(ed)
+	if !f.scrollTo || len(f.matches) == 0 {
+		return
+	}
+	f.scrollTo = false
+	f.current = f.nearest(ed.primary().start())
+	m := f.matches[f.current]
+	ed.setSels([]sel{ed.newSel(m.start, m.end)}, revealNone)
+	if cr, ok := ed.caretRect(m.start); ok && (float64(cr.Y) < ed.scrollY || float64(cr.Y) > ed.scrollY+float64(ed.viewH)-float64(ed.view.lineHeight)) {
+		ed.setScroll(float64(cr.Y) - float64(ed.viewH)/3)
+	}
+}
+
 // search finds the matches of the query in the text again when either
 // changed.
 func (f *finder) search(ed *editor) {
 	opts := [4]bool{f.caseSens, f.wholeWord, f.regex, f.inSelection}
 	if !f.stale && f.version == ed.view.version && f.searched == f.query && f.options == opts {
 		return
+	}
+	if opts[3] != f.options[3] {
+		// Finding in the selection takes the selections there are now.
+		f.scope = nil
 	}
 	f.stale = false
 	f.version, f.searched, f.options = ed.view.version, f.query, opts
@@ -274,133 +297,6 @@ func (f *finder) status() string {
 	return fmt.Sprintf("%d of %d", f.current+1, len(f.matches))
 }
 
-// build builds the find bar over the editor's top right corner.
-func (f *finder) build(c *ui.Context, ed *editor) {
-	t := c.Theme()
-	f.search(ed)
-	if f.scrollTo && len(f.matches) > 0 {
-		// The match at or after the caret is selected as the query is
-		// typed, as Zed's search does.
-		f.scrollTo = false
-		f.current = f.nearest(ed.primary().start())
-		m := f.matches[f.current]
-		ed.setSels([]sel{ed.newSel(m.start, m.end)}, revealNone)
-		if cr, ok := ed.caretRect(m.start); ok && (float64(cr.Y) < ed.scrollY || float64(cr.Y) > ed.scrollY+float64(ed.viewH)-float64(ed.view.lineHeight)) {
-			ed.setScroll(float64(cr.Y) - float64(ed.viewH)/3)
-		}
-	}
-	bar := ui.Column(c).Key("code find").Absolute().Top(t.Space(1)).Right(t.Space(4)).Gap(t.Space(1)).Padding(t.Space(1.5)).
-		Background(t.Surface).Border(1, t.Border).Radius(t.Radius).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.18)).
-		Role(ui.RoleToolbar).Label("Find").Cursor(ui.CursorDefault)
-	bar.HandleInput(shield)
-	closeBar := func() {
-		f.open = false
-		ed.refocus = true
-	}
-	field := func(value *string, placeholder string) ui.Element {
-		return ui.TextInputBase(c, value).Width(t.Space(50)).Placeholder(placeholder).Padding(t.Space(1), t.Space(2)).
-			Background(t.Background).Border(1, t.Border).Radius(t.Radius - 2).FontSize(t.FontSize - 1).Label(placeholder)
-	}
-	button := func(label, tip string) ui.Element {
-		b := ui.ButtonBase(c).Padding(t.Space(0.5), t.Space(1.5)).Radius(t.Radius - 2).Label(tip).Tooltip(tip).KeepFocus()
-		b.Children(func() { ui.Text(c, label).FontSize(t.FontSize - 1) })
-		return b
-	}
-	bar.Children(func() {
-		ui.Row(c).Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
-			in := field(&f.query, "Find")
-			if f.focusQuery {
-				f.focusQuery = false
-				in.Focus().SetTextSelection(0, utf8.RuneCountInString(f.query))
-			}
-			if in.Changed() {
-				f.stale = true
-				f.scrollTo = true
-			}
-			switch {
-			case in.Submitted() && c.Modifiers()&ui.Shift != 0:
-				f.step(ed, -1)
-			case in.Submitted() && c.Modifiers()&ui.Alt != 0:
-				f.selectAll(ed)
-			case in.Submitted():
-				f.step(ed, 1)
-			case in.Shortcut(0, ui.KeyEscape):
-				closeBar()
-			}
-			toggle := func(on *bool, label, tip string) {
-				b := button(label, tip)
-				if *on {
-					b.Background(t.Accent.Alpha(0.2)).TextColor(t.Accent)
-				}
-				if b.Clicked() {
-					*on = !*on
-					f.stale = true
-					if on == &f.inSelection {
-						f.scope = nil
-					}
-				}
-			}
-			toggle(&f.caseSens, "Aa", "Match case")
-			toggle(&f.wholeWord, "ab", "Match whole word")
-			toggle(&f.regex, ".*", "Use regular expression")
-			toggle(&f.inSelection, "[ ]", "Find in selection")
-			ui.Text(c, f.status()).FontSize(t.FontSize - 2).TextColor(t.TextMuted).FontFeatures("tnum").MinWidth(t.Space(16)).Role(ui.RoleStatus)
-			if button("↑", "Previous match").Clicked() {
-				f.step(ed, -1)
-			}
-			if button("↓", "Next match").Clicked() {
-				f.step(ed, 1)
-			}
-			if button("⇄", "Replace").Clicked() {
-				f.replacing = !f.replacing
-			}
-			if button("✕", "Close").Clicked() {
-				closeBar()
-			}
-		})
-		if f.replacing && !ed.o.readOnly {
-			ui.Row(c).Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
-				in := field(&f.replace, "Replace")
-				switch {
-				case in.Submitted() && c.Modifiers()&ui.Cmd != 0:
-					f.replaceAll(ed)
-				case in.Submitted():
-					f.replaceOne(ed)
-				case in.Shortcut(0, ui.KeyEscape):
-					closeBar()
-				}
-				if ui.Button(c, "Replace").Padding(t.Space(0.5), t.Space(2)).FontSize(t.FontSize - 1).Clicked() {
-					f.replaceOne(ed)
-				}
-				if ui.Button(c, "Replace All").Padding(t.Space(0.5), t.Space(2)).FontSize(t.FontSize - 1).Clicked() {
-					f.replaceAll(ed)
-				}
-			})
-		}
-	})
-	if isMac() {
-		switch {
-		case c.Shortcut(ui.Cmd, ui.KeyG):
-			f.step(ed, 1)
-		case c.Shortcut(ui.Shift|ui.Cmd, ui.KeyG):
-			f.step(ed, -1)
-		}
-	} else {
-		switch {
-		case c.Shortcut(0, ui.KeyF3):
-			f.step(ed, 1)
-		case c.Shortcut(ui.Shift, ui.KeyF3):
-			f.step(ed, -1)
-		}
-	}
-}
-
-// shield takes no input, but keeps the presses on what an editor shows
-// over its text, as its find bar, from the editor around it: the input
-// goes to the innermost element taking it as it comes, which then leaves
-// it to the buttons and fields inside, as they take it.
-func shield(ui.InputEvent) bool { return false }
-
 // selectAll selects every match, as alt-enter in Zed's search bar.
 func (f *finder) selectAll(ed *editor) {
 	f.search(ed)
@@ -475,44 +371,4 @@ func (g *goToLine) target(ed *editor) (int, int, bool) {
 		line--
 	}
 	return max(0, min(line, ed.view.text.LineCount()-1)), col, true
-}
-
-func (g *goToLine) build(c *ui.Context, ed *editor) {
-	t := c.Theme()
-	bar := ui.Row(c).Key("code go to line").Absolute().Top(t.Space(1)).Left(0).Right(0).Justify(ui.Center).PassThrough()
-	bar.Children(func() {
-		panel := ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Padding(t.Space(1.5), t.Space(2)).Background(t.Surface).
-			Border(1, t.Border).Radius(t.Radius).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.18))
-		panel.HandleInput(shield)
-		panel.Children(func() {
-			in := ui.TextInputBase(c, &g.text).Width(t.Space(60)).Padding(t.Space(1), t.Space(2)).Background(t.Background).
-				Border(1, t.Border).Radius(t.Radius - 2).Label("Go to line").Placeholder(fmt.Sprintf("Line 1 to %d, then :column", ed.view.text.LineCount()))
-			if g.focus {
-				g.focus = false
-				in.Focus()
-			}
-			line, col, ok := g.target(ed)
-			if ok && line != g.preview {
-				g.preview = line
-				off := offsetOf(ed.view.text, Pos{line, col})
-				if cr, ok := ed.caretRect(off); ok {
-					ed.setScroll(float64(cr.Y) - float64(ed.viewH-ed.view.lineHeight)/2)
-				}
-			}
-			cur := posOf(ed.view.text, ed.primary().head)
-			ui.Text(c, fmt.Sprintf("Current line %d of %d, column %d", cur.Line+1, ed.view.text.LineCount(), cur.Col+1)).
-				FontSize(t.FontSize - 2).TextColor(t.TextMuted)
-			switch {
-			case in.Submitted():
-				if line, col, ok := g.target(ed); ok {
-					off := offsetOf(ed.view.text, Pos{line, col})
-					g.open = false
-					ed.setSels([]sel{ed.newSel(off, off)}, revealCenter)
-					ed.refocus = true
-				}
-			case in.Shortcut(0, ui.KeyEscape):
-				g.close(ed)
-			}
-		})
-	})
 }

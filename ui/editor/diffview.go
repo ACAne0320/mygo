@@ -45,9 +45,9 @@ type DiffState struct {
 	Theme      *Theme
 	// Bindings add key bindings to the editors of the sides.
 	Bindings []Binding
-	// HunkActions shows Revert and Keep on each change, which put the old
-	// lines back in New, or make the new lines Old's, as an agent's
-	// changes are reviewed.
+	// HunkActions shows Revert and Keep on the change under the pointer,
+	// or the caret's, which put the old lines back in New, or make the
+	// new lines Old's, as an agent's changes are reviewed.
 	HunkActions bool
 	// LineSelection lets the numbers of lines be clicked and dragged to
 	// select lines, which OnLineSelection reports.
@@ -62,6 +62,21 @@ type DiffState struct {
 	// split view leaves the room empty.
 	Annotations      []DiffAnnotation
 	RenderAnnotation func(c *ui.Context, a DiffAnnotation)
+
+	// RenderSeparator, RenderHunkActions and RenderGutterButton build the
+	// viewer's separators, the actions on a change and the gutter's
+	// button in place of its own (DefaultSeparator, DefaultHunkActions
+	// and DefaultGutterButton, which they can call to wrap them): each is
+	// given the element the viewer places, to style and fill, and what
+	// the part shows and does. A separator is as wide as the viewer, and
+	// 32 DIPs high.
+	RenderSeparator    func(c *ui.Context, sep ui.Element, s *DiffSeparator)
+	RenderHunkActions  func(c *ui.Context, bar ui.Element, a *DiffHunkActions)
+	RenderGutterButton func(c *ui.Context, btn ui.Element, line DiffLineRange)
+	// RenderFindBar and RenderGoToLine build the bars of the sides'
+	// editors, as State's.
+	RenderFindBar  func(c *ui.Context, bar ui.Element, f *FindBar)
+	RenderGoToLine func(c *ui.Context, bar ui.Element, g *GoToLineBar)
 
 	model    diffModel
 	eds      [2]editor // the old side's and the new side's
@@ -263,6 +278,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 			readOnly: old || !d.Editable, font: d.Font, lineHeight: d.LineHeight, tabSize: d.TabSize,
 			wrap: d.Wrap, lineNumbers: LineNumbersOn, whitespace: WhitespaceNone, autoClose: true,
 			theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: 3,
+			renderFindBar: d.RenderFindBar, renderGoToLine: d.RenderGoToLine,
 		}
 		if d.NoLineNumbers {
 			o.lineNumbers = LineNumbersOff
@@ -299,6 +315,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 			if d.FitContent {
 				ed.FillWidth()
 			}
+			d.buildSeparators(c, ct)
 		})
 		if d.FitContent {
 			root.Height(float32(d.eds[1].view.heights.total()))
@@ -349,6 +366,7 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 				ui.Box(c).Width(1).FillHeight().Background(ct.Background.Mix(t.Border, 0.6))
 			}
 		}
+		d.buildSeparators(c, ct)
 	})
 	if d.FitContent {
 		row.Height(float32(max(d.eds[0].view.heights.total(), d.eds[1].view.heights.total())))

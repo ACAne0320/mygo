@@ -40,6 +40,11 @@ type options struct {
 	onDefinition  func(int)
 	onGutterClick func(int)
 	contextMenu   func(m *ui.Menu)
+	// The parts' render functions, nil for the editor's own.
+	renderFindBar     func(*ui.Context, ui.Element, *FindBar)
+	renderGoToLine    func(*ui.Context, ui.Element, *GoToLineBar)
+	renderCompletions func(*ui.Context, ui.Element, *CompletionMenu)
+	renderHover       func(*ui.Context, ui.Element, *HoverCard)
 	// decor shows a diff in the editor.
 	decor decor
 	// noVScroll leaves vertical scrolling to the owner, as the sides of a

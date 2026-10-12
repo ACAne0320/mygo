@@ -114,16 +114,16 @@ func (ed *editor) build(c *ui.Context, buf *Buffer, o options) ui.Element {
 			ds.buildBlocks(c, ed)
 		}
 		if ed.find.open {
-			ed.find.build(c, ed)
+			ed.buildFindBar(c)
 		}
 		if ed.goTo.open {
-			ed.goTo.build(c, ed)
+			ed.buildGoToLine(c)
 		}
 		if hasCaret {
-			ed.complete.build(c, ed, caretAnchor)
+			ed.buildCompletions(c, caretAnchor)
 		}
 		if hasHover {
-			h.buildPopover(c, ed, hoverAnchor)
+			ed.buildHover(c, hoverAnchor)
 		}
 	})
 	ed.needsBuild = false

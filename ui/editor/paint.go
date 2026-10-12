@@ -239,24 +239,44 @@ func (ed *editor) paintLines(p *ui.Painter, r ui.Rect, f *frame) {
 // paintBlocks paints the blocks of the lines in view, across the gutter
 // and the text.
 func (ed *editor) paintBlocks(p *ui.Painter, r ui.Rect, f *frame) {
-	h := &ed.view.heights
-	if ed.o.decor == nil || len(h.blocks) == 0 {
+	if ed.o.decor == nil || len(ed.view.heights.blocks) == 0 {
 		return
 	}
-	for line := f.first; line <= f.last; line++ {
+	ed.eachBlock(f.first, f.last, func(b *block, top float64) { ed.paintBlock(p, r, b, top) })
+}
+
+// eachBlock calls fn with the blocks of lines first to last, and their
+// tops in the content.
+func (ed *editor) eachBlock(first, last int, fn func(b *block, top float64)) {
+	h := &ed.view.heights
+	for line := first; line <= last; line++ {
 		g := h.geometry(line)
 		above, below := h.blocksOf(line)
 		top := g.top
 		for i := range above {
-			ed.paintBlock(p, r, &above[i], top)
+			fn(&above[i], top)
 			top += float64(above[i].height)
 		}
 		top = g.below
 		for i := range below {
-			ed.paintBlock(p, r, &below[i], top)
+			fn(&below[i], top)
 			top += float64(below[i].height)
 		}
 	}
+}
+
+// blocksInView calls fn with the blocks of the lines in view, as the
+// last frame laid them out, and their tops in the content.
+func (ed *editor) blocksInView(fn func(b *block, top float64)) {
+	h := &ed.view.heights
+	if len(h.blocks) == 0 || h.n == 0 {
+		return
+	}
+	y0, y1 := ed.scrollY, ed.scrollY+float64(ed.viewH)
+	if ed.o.fitContent {
+		y0, y1 = 0, h.total()
+	}
+	ed.eachBlock(h.lineAt(y0), min(h.lineAt(y1), h.n-1), fn)
 }
 
 func (ed *editor) paintBlock(p *ui.Painter, r ui.Rect, b *block, top float64) {
@@ -384,7 +404,7 @@ func (ed *editor) paintLine(p *ui.Painter, r ui.Rect, f *frame, line int, g line
 				f.rects = append(f.rects, ui.Rect{X: row.indent, W: v.charWidth})
 			}
 			for _, rc := range f.rects {
-				squiggle(p, ox+rc.X, y+lh-2.5, rc.W, ct.severityColor(d.Severity))
+				squiggle(p, ox+rc.X, y+lh-2.5, rc.W, ct.SeverityColor(d.Severity))
 			}
 		}
 		if ri == len(l.rows)-1 && ed.isFolded(line) {
@@ -722,7 +742,7 @@ func (ed *editor) paintScrollbars(p *ui.Painter, r ui.Rect, f *frame) {
 			if i > 2000 {
 				break
 			}
-			mark(h.top(v.text.LineOf(d.Start)), v.lineHeight, 7, 3, ct.severityColor(d.Severity))
+			mark(h.top(v.text.LineOf(d.Start)), v.lineHeight, 7, 3, ct.SeverityColor(d.Severity))
 		}
 		// Carets.
 		if len(ed.sels) <= 100 {
