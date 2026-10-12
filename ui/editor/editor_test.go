@@ -187,6 +187,20 @@ func TestCodeEditorScrollbar(t *testing.T) {
 		t.Fatal("dragging the scroll bar did not scroll")
 	}
 	ct.want("|package main\n\nfunc main() {}\n")
+	// The horizontal one shows for a line running under the vertical one.
+	ct = newEditorTest(t, "", "|"+strings.Repeat("x", 200))
+	y := float32(400 - scrollbarWidth/2)
+	ct.tt.Move(300, y)
+	if c := ct.tt.Cursor(); c != ui.CursorDefault {
+		t.Fatalf("cursor over the horizontal scroll bar %v, want the arrow", c)
+	}
+	ct.tt.Press(300, y)
+	ct.tt.Move(500, y)
+	ct.tt.Release(500, y)
+	if ct.st.ed.scrollX <= 0 {
+		t.Fatal("dragging the horizontal scroll bar did not scroll")
+	}
+	ct.want("|" + strings.Repeat("x", 200))
 }
 
 func TestCodeEditorMultiCursor(t *testing.T) {

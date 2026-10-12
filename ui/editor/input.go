@@ -368,13 +368,13 @@ func (ed *editor) wheel(ev ui.InputEvent) bool {
 
 // scrollbars reports which scroll bars the editor shows, and takes
 // presses on: the vertical one while it scrolls, as it does past the end
-// of a short text, and the horizontal one while a line is wider than the
-// text area.
+// of a short text, and the horizontal one while a line runs under the
+// vertical one or beyond.
 func (ed *editor) scrollbars() (vertical, horizontal bool) {
 	if ed.o.noScrollbar || ed.o.fitContent {
 		return false, false
 	}
-	return ed.scrollMax() > 0, !ed.view.wrap && ed.maxScrollX() > 0
+	return ed.scrollMax() > 0, !ed.view.wrap && ed.view.maxLine > ed.r.W-ed.textX-scrollbarWidth
 }
 
 func (ed *editor) maxScrollX() float32 {
