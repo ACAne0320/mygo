@@ -249,17 +249,18 @@ func (lx *lexer) code(st *lexState, i int) int {
 			return i + 1
 		}
 	}
-	for _, p := range lx.lineComments {
-		if strings.HasPrefix(line[i:], p) {
-			out.add(n, TokenComment)
-			return n
-		}
-	}
+	// Block comments first: Lua's --[[ starts with its line comment's --.
 	for k, b := range lx.blockComments {
 		if strings.HasPrefix(line[i:], b[0]) {
 			st.mode, st.depth = lexModeComment+k, 0
 			out.add(i+len(b[0]), TokenComment)
 			return i + len(b[0])
+		}
+	}
+	for _, p := range lx.lineComments {
+		if strings.HasPrefix(line[i:], p) {
+			out.add(n, TokenComment)
+			return n
 		}
 	}
 	if j, ok := lx.stringStart(st, i, ""); ok {

@@ -183,12 +183,19 @@ type Indenter interface {
 // frontier; past it they are what they were before the edits since,
 // which a line starting as it did then, past dirty, confirms.
 type tokenHighlighter struct {
-	t        Tokenizer
-	text     Snapshot
-	states   []uint64 // the state line i starts in
-	frontier int      // how many lines from the top start in states known right
-	dirty    int      // the last line an edit changed
-	scratch  []Token
+	t      Tokenizer
+	text   Snapshot
+	states []uint64 // the state line i starts in
+	// frontier is how many lines from the top start in states known
+	// right. confirmed is how many would be, were the edits since the
+	// last pass to leave the states after them as they were: a pass that
+	// tokenizes past the edits into a line starting as it did confirms
+	// the lines up to it, and no further, as those after it were never
+	// tokenized since an earlier edit.
+	frontier  int
+	confirmed int
+	dirty     int // the last line an edit changed, -1 for none
+	scratch   []Token
 }
 
 // NewTokenHighlighter returns the highlighter of text that a Language
@@ -197,7 +204,7 @@ type tokenHighlighter struct {
 // starts in the state it started in before, as TextMate grammars and
 // Monaco do, a frame's budget at a time.
 func NewTokenHighlighter(t Tokenizer, text Snapshot) Highlighter {
-	return &tokenHighlighter{t: t, text: text, states: []uint64{0}, frontier: 1}
+	return &tokenHighlighter{t: t, text: text, states: []uint64{0}, frontier: 1, confirmed: 1, dirty: -1}
 }
 
 func (h *tokenHighlighter) Edit(old, new Snapshot, changes []Change) {
@@ -211,9 +218,15 @@ func (h *tokenHighlighter) Edit(old, new Snapshot, changes []Change) {
 			h.states = slices.Delete(h.states, from, min(len(h.states), from+removed))
 			h.states = slices.Insert(h.states, min(from, len(h.states)), make([]uint64, added)...)
 		}
-		// Line newLine starts as it did; those after it may not.
+		// Line newLine starts as it did; those after it may not, and those
+		// after a change within the lines confirmed move with them.
 		h.frontier = min(h.frontier, newLine+1)
-		if h.dirty > newLine+removed {
+		if oldEndLine < h.confirmed {
+			h.confirmed += added - removed
+		} else {
+			h.confirmed = min(h.confirmed, newLine+1)
+		}
+		if h.dirty > oldEndLine {
 			h.dirty += added - removed
 		}
 		h.dirty = max(h.dirty, newEndLine)
@@ -230,6 +243,15 @@ func (h *tokenHighlighter) Highlight(last int, budget time.Duration) bool {
 		h.states = append(h.states, 0)
 	}
 	h.frontier = max(1, min(h.frontier, len(h.states)))
+	h.confirmed = min(h.confirmed, len(h.states))
+	// Whatever way the pass ends, the lines it leaves known are those
+	// confirmed: those past where it stopped wait for the next.
+	defer func() {
+		h.confirmed = h.frontier
+		if h.frontier > h.dirty {
+			h.dirty = -1
+		}
+	}()
 	start := time.Now()
 	count := 0
 	for h.frontier <= last {
@@ -242,9 +264,10 @@ func (h *tokenHighlighter) Highlight(last int, budget time.Duration) bool {
 			var end uint64
 			h.scratch, end = h.t.Tokenize(line, h.states[i], h.scratch[:0])
 			if i+1 < len(h.states) {
-				if h.states[i+1] == end && i+1 > h.dirty {
-					// The lines after start as they did.
-					h.frontier = len(h.states)
+				if h.states[i+1] == end && i+1 > h.dirty && h.confirmed > i+2 {
+					// The lines after start as they did, up to those
+					// confirmed before the edits.
+					h.frontier = h.confirmed
 					return false
 				}
 				h.states[i+1] = end
@@ -302,7 +325,7 @@ func (b *Buffer) highlighter() Highlighter {
 	}
 	s := b.syntax
 	if s == nil || s.lang != lang {
-		s = &syntaxState{lang: lang, text: Snapshot{b.text, b.version}}
+		s = &syntaxState{lang: lang, text: Snapshot{b.text, b.version, b.crlf}}
 		b.syntax = s
 	}
 	b.mu.Unlock()
@@ -317,7 +340,7 @@ func (b *Buffer) highlighter() Highlighter {
 		return s.h
 	}
 	for _, e := range entries {
-		next := Snapshot{e.text, e.version}
+		next := Snapshot{e.text, e.version, b.crlf}
 		s.h.Edit(s.text, next, publicChanges(e.changes))
 		s.text = next
 	}

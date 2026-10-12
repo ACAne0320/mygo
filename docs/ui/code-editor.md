@@ -60,6 +60,10 @@ both from 0: `Pos` and `Offset` convert between them, and `Line`, `Slice`
 and `String` read the text. `Set` replaces the text as an edit, which undo
 takes back, and `Reset` as a new document, without history.
 
+Lines end in `\n`, as in Zed: a text with `\r\n` line endings is kept with
+`\n` ones, and `LineEnding` says which it had, which `WriteTo` writes, so
+that a file saves as it was; `SetLineEnding` changes it.
+
 The text is a persistent tree of chunks, as Zed's rope: an edit copies a
 few kilobytes and a path of the tree, whatever the size of the document,
 and each version shares the rest with the one before. Undo keeps versions

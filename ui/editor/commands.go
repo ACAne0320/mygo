@@ -108,10 +108,12 @@ func (ed *editor) run(cmd Command) bool {
 		ed.setSels([]sel{ed.newSel(0, r.Len())}, revealNone)
 		return true
 	case SelectLine:
+		// The lines of the selections, and the line a selection of whole
+		// lines ends at the start of, as pressing it again extends.
 		sels := slices.Clone(ed.sels)
 		for i := range sels {
 			s := &sels[i]
-			a, z := ed.lineSpanOf(*s)
+			a, z := r.LineOf(s.start()), r.LineOf(s.end())
 			s.anchor = r.LineStart(a)
 			s.head = min(r.LineStart(z+1), r.Len())
 			if z+1 >= r.LineCount() {
@@ -317,6 +319,7 @@ func (ed *editor) run(cmd Command) bool {
 				ed.folds = append(ed.folds, fold{a, z})
 			}
 		}
+		ed.moveOutOfFolds()
 		ed.needsBuild = true
 		return true
 	case FoldLevel1, FoldLevel2, FoldLevel3, FoldLevel4, FoldLevel5, FoldLevel6, FoldLevel7, FoldLevel8, FoldLevel9:
@@ -383,7 +386,7 @@ func (ed *editor) move(extend bool, fn func(sel) int) bool {
 	sels := slices.Clone(ed.sels)
 	for i := range sels {
 		s := &sels[i]
-		to := fn(*s)
+		to := ed.overFolds(s.head, fn(*s))
 		if extend {
 			s.head = to
 		} else {
@@ -489,4 +492,27 @@ func direction(back bool) int {
 		return -1
 	}
 	return 1
+}
+
+// overFolds moves a caret going from off to to over the lines a fold
+// hides rather than into them, which would unfold them: going forward to
+// the first line shown after them, back to the end of the line folding
+// them, as Zed and VS Code skip a fold.
+func (ed *editor) overFolds(off, to int) int {
+	r := &ed.view.text
+	h := heights{hidden: ed.hiddenSpans()}
+	line := r.LineOf(to)
+	if !h.isHidden(line) {
+		return to
+	}
+	for _, sp := range h.hidden {
+		if line < sp.from || line > sp.to {
+			continue
+		}
+		if to > off && sp.to+1 < r.LineCount() {
+			return r.LineStart(sp.to + 1)
+		}
+		return r.LineEnd(sp.from - 1)
+	}
+	return to
 }

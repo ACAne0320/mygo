@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"strconv"
+
 	"github.com/egoist/mygo/ui"
 )
 
@@ -78,16 +80,21 @@ type DiffState struct {
 	RenderFindBar  func(c *ui.Context, bar ui.Element, f *FindBar)
 	RenderGoToLine func(c *ui.Context, bar ui.Element, g *GoToLineBar)
 
-	model    diffModel
-	eds      [2]editor // the old side's and the new side's
-	sides    [2]diffSide
-	oldView  view // the old text, for its lines in a unified view
-	scroll   sharedScroll
-	expanded map[int]diffExpansion
-	expandV  int
-	selected DiffLineRange
-	hasSel   bool
-	prepared diffPrepared
+	model   diffModel
+	eds     [2]editor // the old side's and the new side's
+	sides   [2]diffSide
+	oldView view // the old text, for its lines in a unified view
+	scroll  sharedScroll
+	// revealed are the unchanged lines expanded, in the old text, which
+	// edits of the new text leave where they are; revealedVer is the old
+	// text's version they are of.
+	revealed    []lineSpan
+	revealedVer uint64
+	revealedOf  *Buffer
+	expandV     int
+	selected    DiffLineRange
+	hasSel      bool
+	prepared    diffPrepared
 	// blocksV counts the blocks prepare made, and built is the geometry
 	// the separators and buttons were built for, which a frame changing
 	// it builds again (diffGeom).
@@ -169,8 +176,6 @@ type DiffHunk struct {
 	OldStart, OldEnd, NewStart, NewEnd int
 }
 
-type diffExpansion struct{ top, bottom int }
-
 func (d *DiffState) context() int {
 	switch {
 	case d.ContextLines < 0:
@@ -195,11 +200,32 @@ func (d *DiffState) ensure() {
 	if d.New == nil {
 		d.New = NewBuffer("")
 	}
-	if d.expanded == nil {
-		d.expanded = map[int]diffExpansion{}
+	if pt := d.partial; pt != nil && (pt.old != d.Old || pt.new != d.New) {
+		// Texts of the app's in place of a patch's.
+		d.partial = nil
+		d.prepared = diffPrepared{}
 	}
 	d.model.set(d.Old, d.New)
 	d.model.update()
+	// The lines revealed move with edits of the old text, as Keep makes,
+	// and go with it.
+	if d.revealedOf != d.Old {
+		d.revealed, d.revealedOf, d.revealedVer = nil, d.Old, d.Old.Version()
+		d.expandV++
+	}
+	if ver := d.Old.Version(); ver != d.revealedVer {
+		if changes, _, ok := d.Old.changesSince(d.revealedVer); ok && len(d.revealed) > 0 {
+			for _, cs := range changes {
+				for i := range d.revealed {
+					d.revealed[i] = lineSpan{mapLine(d.revealed[i].from, cs), mapLine(d.revealed[i].to, cs)}
+				}
+			}
+		} else if !ok {
+			d.revealed = nil
+		}
+		d.revealedVer = ver
+		d.expandV++
+	}
 }
 
 // Hunks returns the changes between the texts.
@@ -240,7 +266,7 @@ func (d *DiffState) ExpandAll() {
 
 func (d *DiffState) CollapseAll() {
 	d.ExpandUnchanged = false
-	d.expanded = map[int]diffExpansion{}
+	d.revealed = nil
 	d.expandV++
 }
 
@@ -278,11 +304,13 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 	d.ensure()
 	t := c.Theme()
 	ct := d.Theme.resolve(t)
+	// Both gutters as wide, so that both sides wrap alike.
+	digits := max(3, len(strconv.Itoa(max(d.Old.LineCount(), d.New.LineCount()))))
 	opts := func(old bool) options {
 		o := options{
 			readOnly: old || !d.Editable, font: d.Font, lineHeight: d.LineHeight, tabSize: d.TabSize,
 			wrap: d.Wrap, lineNumbers: LineNumbersOn, whitespace: WhitespaceNone, autoClose: true,
-			theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: 3,
+			theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: digits,
 			renderFindBar: d.RenderFindBar, renderGoToLine: d.RenderGoToLine,
 		}
 		if d.NoLineNumbers {
@@ -384,18 +412,45 @@ func DiffView(c *ui.Context, d *DiffState) ui.Element {
 // expand reveals lines of the gap starting at old line a: at its top,
 // below the change before it (dir 1), at its bottom (dir -1), or all.
 func (d *DiffState) expand(a int, dir int, all bool) {
-	e := d.expanded[a]
-	n := d.expansionLines()
-	switch {
-	case all:
-		e.top += 1 << 30
-	case dir > 0:
-		e.top += n
-	default:
-		e.bottom += n
+	for _, g := range d.gapList {
+		if g.a != a || g.hidden == 0 {
+			continue
+		}
+		from, to := g.hideA, g.hideA+g.hidden-1
+		n := d.expansionLines()
+		switch {
+		case all:
+		case dir > 0:
+			to = min(to, from+n-1)
+		default:
+			from = max(from, to-n+1)
+		}
+		d.revealed = mergeSpans(append(d.revealed, lineSpan{from, to}))
+		d.expandV++
+		return
 	}
-	d.expanded[a] = e
-	d.expandV++
+}
+
+// revealedAt returns the last line of the lines revealed holding old line
+// a, or -1.
+func (d *DiffState) revealedAt(a int) int {
+	for _, sp := range d.revealed {
+		if a >= sp.from && a <= sp.to {
+			return sp.to
+		}
+	}
+	return -1
+}
+
+// revealedBefore returns the first line of the lines revealed holding old
+// line a, or -1.
+func (d *DiffState) revealedBefore(a int) int {
+	for _, sp := range d.revealed {
+		if a >= sp.from && a <= sp.to {
+			return sp.from
+		}
+	}
+	return -1
 }
 
 // selectLine selects a line by its number, or extends the selection to

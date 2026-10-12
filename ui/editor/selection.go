@@ -248,6 +248,12 @@ func graphemeRight(r rope.Text, off int) int {
 		return n
 	}
 	c, size := r.RuneAt(off)
+	if isRegional(c) && regionalBefore(r, off)%2 == 0 {
+		// A flag: two regional indicators.
+		if d, dsize := r.RuneAt(off + size); isRegional(d) {
+			size += dsize
+		}
+	}
 	off += size
 	if c == '\r' {
 		if d, _ := r.RuneAt(off); d == '\n' {
@@ -292,14 +298,38 @@ func graphemeLeft(r rope.Text, off int) int {
 			off -= size
 			continue
 		}
+		if isRegional(c) && regionalBefore(r, off)%2 == 1 {
+			// The second of a flag's regional indicators.
+			_, size := r.RuneBefore(off)
+			off -= size
+		}
 		return off
 	}
 	return 0
 }
 
+// isRegional reports whether c is a regional indicator, two of which make
+// a flag.
+func isRegional(c rune) bool { return c >= 0x1f1e6 && c <= 0x1f1ff }
+
+// regionalBefore counts the regional indicators right before off, which
+// pair up from the first.
+func regionalBefore(r rope.Text, off int) int {
+	n := 0
+	for off > 0 {
+		c, size := r.RuneBefore(off)
+		if !isRegional(c) {
+			break
+		}
+		n++
+		off -= size
+	}
+	return n
+}
+
 // extends reports whether c goes with the character before it.
 func extends(c rune) bool {
-	return unicode.Is(unicode.Mn, c) || unicode.Is(unicode.Me, c) || c >= 0xfe00 && c <= 0xfe0f ||
+	return unicode.Is(unicode.Mn, c) || unicode.Is(unicode.Me, c) || unicode.Is(unicode.Mc, c) || c >= 0xfe00 && c <= 0xfe0f ||
 		c >= 0x1f3fb && c <= 0x1f3ff || c >= 0xe0020 && c <= 0xe007f
 }
 

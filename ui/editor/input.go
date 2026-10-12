@@ -19,7 +19,25 @@ const scrollbarWidth = 10
 
 // input takes the editor's input as it comes.
 func (ed *editor) input(ev ui.InputEvent) bool {
-	ed.sync()
+	return ed.retry(func() bool { return ed.dispatch(ev) })
+}
+
+// retry runs fn, which edits the text as the editor shows it, again on
+// the text as it is when another goroutine edited the buffer meanwhile,
+// rather than leaving the edit out (apply).
+func (ed *editor) retry(fn func() bool) bool {
+	for range 4 {
+		ed.sync()
+		ed.stale = false
+		ok := fn()
+		if !ed.stale {
+			return ok
+		}
+	}
+	return false
+}
+
+func (ed *editor) dispatch(ev ui.InputEvent) bool {
 	ed.frameNow = time.Now()
 	switch ev.Kind {
 	case ui.InputKeyDown:
@@ -332,6 +350,15 @@ func (ed *editor) pointerMove(ev ui.InputEvent) bool {
 	if ed.regionAt(ev.X, ev.Y) == regionText {
 		cx, cy := ed.toContent(ev.X, ev.Y)
 		off = ed.offsetAt(cx, cy)
+		// Past the end of a line, or below the last, is over no text.
+		if cr, ok := ed.caretRect(off); !ok || float64(cy) > float64(cr.Y+cr.H) ||
+			off == ed.view.text.LineEnd(ed.view.text.LineOf(off)) && cx > cr.X+ed.view.charWidth/2 {
+			off = -1
+		}
+	}
+	if off < 0 {
+		// Off the text, nothing rests.
+		h.pending, h.restOff = false, -1
 	}
 	// Off the text hovered, the hover goes after a grace, so that the
 	// pointer can go into it, as the build sees (hideAt).
@@ -584,7 +611,7 @@ func (ed *editor) targets(r *ui.TextInputRange) []ui.TextInputRange {
 			return []ui.TextInputRange{{Start: a, End: z}}
 		}
 	}
-	if ed.markedActive && len(ed.marked) == len(ed.sels) {
+	if ed.markedActive && len(ed.marked) > 0 {
 		return slices.Clone(ed.marked)
 	}
 	out := make([]ui.TextInputRange, len(ed.sels))
@@ -595,7 +622,10 @@ func (ed *editor) targets(r *ui.TextInputRange) []ui.TextInputRange {
 }
 
 func (ed *editor) ReplaceText(r *ui.TextInputRange, s string) {
-	ed.sync()
+	ed.retry(func() bool { ed.replaceText(r, s); return true })
+}
+
+func (ed *editor) replaceText(r *ui.TextInputRange, s string) {
 	if ed.o.readOnly {
 		return
 	}
@@ -614,7 +644,10 @@ func (ed *editor) ReplaceText(r *ui.TextInputRange, s string) {
 }
 
 func (ed *editor) SetMarkedText(r *ui.TextInputRange, s string, selected ui.TextInputRange) {
-	ed.sync()
+	ed.retry(func() bool { ed.setMarkedText(r, s, selected); return true })
+}
+
+func (ed *editor) setMarkedText(r *ui.TextInputRange, s string, selected ui.TextInputRange) {
 	if ed.o.readOnly {
 		return
 	}
@@ -624,7 +657,13 @@ func (ed *editor) SetMarkedText(r *ui.TextInputRange, s string, selected ui.Text
 	ed.replaceRanges(ts, s, editCompose, sa, sz)
 	ed.markedActive = s != ""
 	ed.marked = ed.marked[:0]
-	if s != "" {
+	switch {
+	case s == "":
+	case len(ts) == 1 && len(ed.sels) > 1:
+		// The range named alone holds the composition.
+		p := ed.primary()
+		ed.marked = append(ed.marked, ui.TextInputRange{Start: p.start() - sa, End: p.start() - sa + len(s)})
+	default:
 		for _, sel := range ed.sels {
 			ed.marked = append(ed.marked, ui.TextInputRange{Start: sel.start() - sa, End: sel.start() - sa + len(s)})
 		}
@@ -644,12 +683,23 @@ func (ed *editor) replaceRanges(ts []ui.TextInputRange, s string, kind editKind,
 	}
 	single := len(ts) == 1 && len(ed.sels) > 1
 	sels := slices.Clone(ed.sels)
+	newest := ed.primary().id
 	ok := ed.apply(edits, kind, func(move func(int, bias) int) []sel {
 		if single {
-			// One range the input method named: the newest caret goes after
-			// it, the others move with the text.
+			// One range the input method named: the newest caret goes in
+			// it, where the input method says, the others move with the
+			// text.
 			for i := range sels {
-				sels[i].anchor, sels[i].head = move(sels[i].anchor, biasRight), move(sels[i].head, biasRight)
+				sl := &sels[i]
+				if sl.id != newest {
+					sl.anchor, sl.head = move(sl.anchor, biasRight), move(sl.head, biasRight)
+					continue
+				}
+				start := move(ts[0].Start, biasLeft)
+				sl.anchor, sl.head, sl.goal = start+len(s), start+len(s), -1
+				if sa >= 0 {
+					sl.anchor, sl.head = start+sa, start+sz
+				}
 			}
 			return sels
 		}

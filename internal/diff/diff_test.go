@@ -3,6 +3,7 @@ package diff
 import (
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -178,5 +179,16 @@ func BenchmarkLines(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		Lines(a, c)
+	}
+}
+
+// The rarity of a line is its record's count in the region, as git's,
+// so that the last of repeated lines is not taken for a unique anchor.
+func TestHistogramRarity(t *testing.T) {
+	a := []string{"", "", "", "\tv14 := f13()", "\tv22 := f25()", "}", ""}
+	b := []string{"\t\treturn err", "\treturn nil", "", "", "\tv22 := f25()", "}", ""}
+	got, want := Lines(a, b), []Hunk{{0, 0, 0, 2}, {2, 4, 4, 4}} // git diff --histogram's
+	if !slices.Equal(got, want) {
+		t.Errorf("hunks %v, want git's %v", got, want)
 	}
 }

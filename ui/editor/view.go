@@ -24,6 +24,7 @@ type view struct {
 	text     rope.Text
 	version  uint64
 	hl       Highlighter // the buffer's, as of the last frame
+	hlGen    int         // counts the highlighters the view had
 	readOnly bool
 
 	font       ui.Font
@@ -83,6 +84,7 @@ type dispSeg struct {
 	from, to int // the bytes of the line it shows
 	kind     uint8
 	inlay    int
+	ghost    bool // a suggestion, which a caret at it shows before
 }
 
 const (
@@ -302,20 +304,26 @@ func (v *view) sync(moved func(cs []change)) bool {
 	if v.buf == nil {
 		return true
 	}
-	changes, version, ok := v.buf.changesSince(v.version)
-	text, _ := v.buf.snapshot()
+	changes, version, text, ok := v.buf.changesTo(v.version)
 	if version == v.version && ok {
 		v.text = text
 		return true
 	}
+	old := v.text
 	v.text, v.version = text, version
 	v.lines.m = nil
 	if !ok {
+		// Too far behind the buffer's log to follow its edits: the
+		// changes of the lines between the text it had and the text.
+		cs := changesBetween(old, text)
 		v.heights.setLines(text.LineCount())
 		v.heights.wraps.reset(text.LineCount(), v.wrap)
 		v.wrapAt = 0
+		for i := range v.inlays {
+			v.inlays[i].at = mapOffset(v.inlays[i].at, cs, biasRight)
+		}
 		if moved != nil {
-			moved(nil)
+			moved(cs)
 		}
 		return false
 	}
@@ -344,11 +352,18 @@ func (v *view) advanceSyntax(upTo int, budget time.Duration) bool {
 	if v.buf == nil {
 		return true
 	}
-	v.hl = v.buf.highlighter()
-	if v.hl == nil {
+	hl := v.buf.highlighter()
+	if hl != v.hl {
+		// Another language: the lines laid out with the old one's tokens
+		// go, and what was found of its brackets.
+		v.hl = hl
+		v.lines.m = nil
+		v.hlGen++
+	}
+	if hl == nil {
 		return true
 	}
-	return v.hl.Highlight(upTo, budget)
+	return hl.Highlight(upTo, budget)
 }
 
 // line returns line n laid out.
@@ -429,7 +444,7 @@ func (v *view) display(l *lineLayout) {
 		for ii < len(inl) && inl[ii].at-l.start <= at {
 			flush(at)
 			in := inl[ii]
-			l.segs = append(l.segs, dispSeg{disp: b.Len(), from: at, to: at, kind: segInlay, inlay: ii})
+			l.segs = append(l.segs, dispSeg{disp: b.Len(), from: at, to: at, kind: segInlay, inlay: ii, ghost: in.kind == 1})
 			b.WriteString(in.text)
 			col += utf8.RuneCountInString(in.text)
 			ii++
@@ -500,7 +515,7 @@ func (l *lineLayout) toDisp(col int, after bool) int {
 			}
 		case segInlay:
 			if col == s.from {
-				if after {
+				if after && !s.ghost {
 					return s.disp + segLen(l, i)
 				}
 				out = s.disp
@@ -562,7 +577,9 @@ func (v *view) layoutRows(l *lineLayout) {
 		if i > 0 {
 			row.indent = indent
 		}
-		v.shapeRow(l.disp, &row)
+		// The rows of a wrapped line are shaped as they show, not all
+		// of a long line's at once.
+		v.shapeRow(l.disp, &row, len(breaks) > 0)
 		l.rows = append(l.rows, row)
 		l.width = max(l.width, row.indent+row.width)
 		from = to
@@ -575,8 +592,14 @@ func (v *view) layoutRows(l *lineLayout) {
 // shapeRow shapes a row, in pieces of at most pieceBytes, placed by
 // their widths: only the first piece of the row is shaped at once when
 // the row is long, the others as they show (piece).
-func (v *view) shapeRow(s string, row *rowLayout) {
+func (v *view) shapeRow(s string, row *rowLayout, lazy bool) {
 	text := s[row.from:row.to]
+	if len(text) <= pieceBytes && lazy {
+		w := v.widths.width(text)
+		row.pieces = append(row.pieces[:0], rowPiece{from: row.from, to: row.to, ascii: isASCII(text), width: w})
+		row.width = w
+		return
+	}
 	if len(text) <= pieceBytes {
 		l := v.shaped.get(text, v.style)
 		row.pieces = append(row.pieces[:0], rowPiece{from: row.from, to: row.to, l: l, ascii: isASCII(text), width: l.Width})
@@ -741,18 +764,28 @@ func (v *view) xOf(l *lineLayout, r *rowLayout, d int) float32 {
 // start.
 func (v *view) dispAt(l *lineLayout, r *rowLayout, x float32) int {
 	x -= r.indent
+	d := r.from
 	for i := range r.pieces {
 		p := &r.pieces[i]
 		if x < p.x+p.width || i == len(r.pieces)-1 {
 			lay := v.piece(l, p)
 			idx := lay.IndexAt(x-p.x, 0)
 			if p.ascii {
-				return min(p.from+idx, p.to)
+				d = min(p.from+idx, p.to)
+			} else {
+				d = p.from + byteOfRune(l.disp[p.from:p.to], idx)
 			}
-			return p.from + byteOfRune(l.disp[p.from:p.to], idx)
+			break
 		}
 	}
-	return r.from
+	// The end of a row a line wraps after is the start of the next, where
+	// a caret shows: on this row, it is before the row's last character,
+	// as Zed clips there.
+	if d >= r.to && r.to < len(l.disp) && r.to > r.from {
+		_, size := utf8.DecodeLastRuneInString(l.disp[r.from:r.to])
+		d = r.to - size
+	}
+	return d
 }
 
 // byteOfRune returns the byte of s rune i starts at.

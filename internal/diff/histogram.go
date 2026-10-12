@@ -79,8 +79,13 @@ func (d *differ) lcs(a0, a1, b0, b1 int) (la0, la1, lb0, lb1 int, ok bool) {
 			r.count = 1
 		}
 		r.first = i
-		cnt[i-a0] = r.count
 		recs[d.a[i]] = r
+	}
+	// How rare each line is: its record's count in the region, as git's
+	// CNT, not the count from it to the region's end, which makes the last
+	// of many blank lines look unique.
+	for i := a0; i < a1; i++ {
+		cnt[i-a0] = recs[d.a[i]].count
 	}
 	best := maxChain + 1
 	common := false

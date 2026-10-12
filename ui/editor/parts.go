@@ -311,6 +311,11 @@ func (ed *editor) buildGoToLine(c *ui.Context) {
 type CompletionMenu struct {
 	c  *ui.Context
 	ed *editor
+	// chosen and closing are what the list was asked while it was built,
+	// done once it is, so that the rows after the one clicked still
+	// build: the item chosen, -1 for none.
+	chosen  int
+	closing bool
 }
 
 // Items returns the completions shown, best first.
@@ -346,15 +351,13 @@ func (m *CompletionMenu) Item(i int) ui.Element {
 }
 
 // Choose inserts completion i of Items in place of the word typed, and
-// closes the list; Close closes it.
+// closes the list; Close closes it. Both happen once the list is built.
 func (m *CompletionMenu) Choose(i int) {
-	cc := &m.ed.complete
-	if i >= 0 && i < len(cc.filtered) {
-		cc.selected = i
-		m.ed.acceptCompletion()
+	if i >= 0 && i < len(m.ed.complete.filtered) {
+		m.chosen = i
 	}
 }
-func (m *CompletionMenu) Close() { m.ed.complete.close() }
+func (m *CompletionMenu) Close() { m.closing = true }
 
 // Font is the editor's font, LineHeight the height of its lines, and
 // Theme its colors, to show code as the editor does.
@@ -454,7 +457,17 @@ func (ed *editor) buildCompletions(c *ui.Context, anchor ui.Element) {
 		if render == nil {
 			render = DefaultCompletions
 		}
-		render(c, panel, &CompletionMenu{c: c, ed: ed})
+		m := &CompletionMenu{c: c, ed: ed, chosen: -1}
+		render(c, panel, m)
+		switch {
+		case m.chosen >= 0:
+			cc.selected = m.chosen
+			ed.acceptCompletion()
+			c.Invalidate()
+		case m.closing:
+			cc.close()
+			c.Invalidate()
+		}
 	})
 	cc.scrollTo = false
 }

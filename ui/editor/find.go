@@ -3,6 +3,7 @@ package editor
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,8 +24,11 @@ type finder struct {
 	scope       []sel
 	focusQuery  bool
 	typed       string // the query as the matches were last chosen for
-	// The matches of the last search, and the text and options it was of.
+	// The matches of the last search, and the text and options it was of;
+	// subs are a regular expression's submatches, as found in the text.
 	matches  []diffRange
+	subs     [][]int
+	dirty    []lineSpan // lines edits changed, to search again
 	current  int
 	stale    bool
 	version  uint64
@@ -78,31 +82,36 @@ func (f *finder) update(ed *editor) {
 	f.scrollTo = false
 	f.current = f.nearest(ed.primary().start())
 	m := f.matches[f.current]
-	ed.setSels([]sel{ed.newSel(m.start, m.end)}, revealNone)
-	if cr, ok := ed.caretRect(m.start); ok && (float64(cr.Y) < ed.scrollY || float64(cr.Y) > ed.scrollY+float64(ed.viewH)-float64(ed.view.lineHeight)) {
-		ed.setScroll(float64(cr.Y) - float64(ed.viewH)/3)
+	// In the middle of the view when out of it, either way, and out of a
+	// fold.
+	ed.setSels([]sel{ed.newSel(m.start, m.end)}, revealCenter)
+	if ed.o.sharedScroll == nil {
+		ed.doReveal()
 	}
 }
 
 // search finds the matches of the query in the text again when either
-// changed.
+// changed: after edits, a plain query only in the lines they changed,
+// the others' matches having moved with them (moved).
 func (f *finder) search(ed *editor) {
 	opts := [4]bool{f.caseSens, f.wholeWord, f.regex, f.inSelection}
 	if !f.stale && f.version == ed.view.version && f.searched == f.query && f.options == opts {
+		if len(f.dirty) > 0 {
+			f.searchLines(ed)
+		}
 		return
 	}
 	if opts[3] != f.options[3] {
 		// Finding in the selection takes the selections there are now.
 		f.scope = nil
 	}
-	f.stale = false
+	f.stale, f.dirty = false, nil
 	f.version, f.searched, f.options = ed.view.version, f.query, opts
-	f.matches = f.matches[:0]
+	f.matches, f.subs = f.matches[:0], f.subs[:0]
 	f.err = nil
 	if f.query == "" {
 		return
 	}
-	r := &ed.view.text
 	if f.inSelection && f.scope == nil {
 		for _, s := range ed.sels {
 			if !s.empty() {
@@ -110,26 +119,41 @@ func (f *finder) search(ed *editor) {
 			}
 		}
 	}
-	text := r.String()
+	text := ed.view.text.String()
+	if !f.regex && !f.caseSens && isASCII(f.query) {
+		if f.lowerVer != ed.view.version || f.lower == "" && text != "" {
+			f.lower, f.lowerVer = asciiLower(text), ed.view.version
+		}
+	}
+	f.scan(ed, text, f.lower, 0, func(m diffRange, sub []int) bool {
+		f.matches = append(f.matches, m)
+		if sub != nil {
+			f.subs = append(f.subs, sub)
+		}
+		return len(f.matches) < maxMatches
+	})
+	f.current = min(f.current, max(0, len(f.matches)-1))
+}
+
+// scan finds the query in text, which starts at byte base of the editor's
+// text (lower its lowered ASCII, when known), and calls found with each
+// match it keeps, and a regular expression's submatches, until found
+// returns false.
+func (f *finder) scan(ed *editor, text, lower string, base int, found func(m diffRange, sub []int) bool) {
 	extra := ed.wordChars()
-	add := func(a, b int) bool {
+	keep := func(a, b int) bool {
 		if f.wholeWord && !isWholeWord(text, a, b, extra) {
-			return true
+			return false
 		}
 		if f.inSelection && len(f.scope) > 0 {
-			in := false
 			for _, s := range f.scope {
-				if a >= s.start() && b <= s.end() {
-					in = true
-					break
+				if base+a >= s.start() && base+b <= s.end() {
+					return true
 				}
 			}
-			if !in {
-				return true
-			}
+			return false
 		}
-		f.matches = append(f.matches, diffRange{a, b})
-		return len(f.matches) < maxMatches
+		return true
 	}
 	switch {
 	case f.regex:
@@ -142,41 +166,94 @@ func (f *finder) search(ed *editor) {
 			f.err = err
 			return
 		}
-		for _, m := range re.FindAllStringIndex(text, maxMatches) {
-			if m[1] == m[0] {
+		for _, m := range re.FindAllStringSubmatchIndex(text, maxMatches) {
+			if m[1] == m[0] || !keep(m[0], m[1]) {
 				continue
 			}
-			if !add(m[0], m[1]) {
-				break
+			if !found(diffRange{base + m[0], base + m[1]}, m) {
+				return
 			}
 		}
-	case f.caseSens:
+	case f.caseSens || isASCII(f.query):
+		q, in := f.query, text
+		if !f.caseSens {
+			if lower == "" {
+				lower = asciiLower(text)
+			}
+			q, in = asciiLower(f.query), lower
+		}
 		for at := 0; ; {
-			i := strings.Index(text[at:], f.query)
-			if i < 0 || !add(at+i, at+i+len(f.query)) {
-				break
+			i := strings.Index(in[at:], q)
+			if i < 0 {
+				return
 			}
-			at += i + len(f.query)
-		}
-	case isASCII(f.query):
-		if f.lowerVer != ed.view.version || f.lower == "" && text != "" {
-			f.lower, f.lowerVer = asciiLower(text), ed.view.version
-		}
-		q := asciiLower(f.query)
-		for at := 0; ; {
-			i := strings.Index(f.lower[at:], q)
-			if i < 0 || !add(at+i, at+i+len(q)) {
-				break
+			a, b := at+i, at+i+len(q)
+			if keep(a, b) && !found(diffRange{base + a, base + b}, nil) {
+				return
 			}
-			at += i + len(q)
+			at = b
 		}
 	default:
 		re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(f.query))
 		for _, m := range re.FindAllStringIndex(text, maxMatches) {
-			if !add(m[0], m[1]) {
+			if keep(m[0], m[1]) && !found(diffRange{base + m[0], base + m[1]}, nil) {
+				return
+			}
+		}
+	}
+}
+
+// moved follows edits of the text the matches were found in: those an
+// edit touches go, the others move with the text, and the lines it
+// changed are searched again (searchLines). A regular expression, whose
+// matches can span lines, or a query of several lines, searches again.
+func (f *finder) moved(cs []change) {
+	if f.stale || f.regex || f.query == "" || strings.Contains(f.query, "\n") {
+		f.stale = true
+		return
+	}
+	out := f.matches[:0]
+	for _, m := range f.matches {
+		touched := false
+		for _, c := range cs {
+			if m.start <= c.oldEnd && m.end >= c.oldStart {
+				touched = true
 				break
 			}
 		}
+		if !touched {
+			out = append(out, diffRange{mapOffset(m.start, cs, biasRight), mapOffset(m.end, cs, biasLeft)})
+		}
+	}
+	f.matches = out
+	for i := range f.dirty {
+		f.dirty[i] = lineSpan{mapLine(f.dirty[i].from, cs), mapLine(f.dirty[i].to, cs)}
+	}
+	for _, c := range cs {
+		f.dirty = append(f.dirty, lineSpan{c.newLine, c.newEndLine})
+	}
+}
+
+// searchLines searches the lines edits changed again, as moved left them.
+func (f *finder) searchLines(ed *editor) {
+	r := &ed.view.text
+	n := r.LineCount()
+	spans := mergeSpans(f.dirty)
+	f.dirty = nil
+	for _, sp := range spans {
+		from, to := min(sp.from, n-1), min(sp.to, n-1)
+		a, z := r.LineStart(from), r.LineEnd(to)
+		f.matches = slices.DeleteFunc(f.matches, func(m diffRange) bool { return m.start >= a && m.start <= z })
+		i, _ := slices.BinarySearchFunc(f.matches, a, func(m diffRange, off int) int { return m.start - off })
+		var found []diffRange
+		f.scan(ed, r.Slice(a, z), "", a, func(m diffRange, _ []int) bool {
+			found = append(found, m)
+			return true
+		})
+		f.matches = slices.Insert(f.matches, i, found...)
+	}
+	if len(f.matches) > maxMatches {
+		f.matches = f.matches[:maxMatches]
 	}
 	f.current = min(f.current, max(0, len(f.matches)-1))
 }
@@ -231,9 +308,10 @@ func (f *finder) step(ed *editor, dir int) bool {
 func (f *finder) replaceOne(ed *editor) {
 	f.search(ed)
 	p := ed.primary()
+	text := f.textForReplacing(ed)
 	for i, m := range f.matches {
 		if m.start == p.start() && m.end == p.end() {
-			with := f.replacement(ed, m)
+			with := f.replacement(text, i)
 			ed.apply([]Edit{{Start: m.start, End: m.end, Text: with}}, editOther, func(move func(int, bias) int) []sel {
 				at := move(m.start, biasLeft) + len(with)
 				return []sel{ed.newSel(at, at)}
@@ -254,16 +332,27 @@ func (f *finder) replaceAll(ed *editor) {
 		return
 	}
 	edits := make([]Edit, len(f.matches))
+	text := f.textForReplacing(ed)
 	for i, m := range f.matches {
-		edits[i] = Edit{Start: m.start, End: m.end, Text: f.replacement(ed, m)}
+		edits[i] = Edit{Start: m.start, End: m.end, Text: f.replacement(text, i)}
 	}
 	ed.apply(edits, editOther, nil)
 }
 
-// replacement returns the replacement of a match: the replace text, with
-// $1 and ${name} expanded for a regular expression.
-func (f *finder) replacement(ed *editor, m diffRange) string {
-	if !f.regex {
+// textForReplacing returns the text a regular expression's replacements
+// expand their submatches from, nothing else needing it.
+func (f *finder) textForReplacing(ed *editor) string {
+	if !f.regex || len(f.subs) == 0 {
+		return ""
+	}
+	return ed.view.text.String()
+}
+
+// replacement returns the replacement of match i: the replace text, with
+// $1 and ${name} expanded for a regular expression, from the submatches
+// found in the whole text, as \b and ^ need the text around a match.
+func (f *finder) replacement(text string, i int) string {
+	if !f.regex || i >= len(f.subs) {
 		return f.replace
 	}
 	pat := f.query
@@ -274,12 +363,7 @@ func (f *finder) replacement(ed *editor, m diffRange) string {
 	if err != nil {
 		return f.replace
 	}
-	src := ed.slice(m.start, m.end)
-	sub := re.FindStringSubmatchIndex(src)
-	if sub == nil {
-		return f.replace
-	}
-	return string(re.ExpandString(nil, f.replace, src, sub))
+	return string(re.ExpandString(nil, f.replace, text, f.subs[i]))
 }
 
 // status is what the bar says of the matches.
@@ -370,5 +454,7 @@ func (g *goToLine) target(ed *editor) (int, int, bool) {
 	} else {
 		line--
 	}
-	return max(0, min(line, ed.view.text.LineCount()-1)), col, true
+	line = max(0, min(line, ed.view.text.LineCount()-1))
+	// The column counts characters, the position bytes.
+	return line, byteOfRuneIn(ed.view.text.Line(line), col), true
 }

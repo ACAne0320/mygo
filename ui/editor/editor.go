@@ -125,7 +125,6 @@ type editor struct {
 	marked           []ui.TextInputRange // the composition, in bytes per selection
 	markedActive     bool
 	autoclosed       []autoclose
-	clip             clipboard
 
 	scrollY    float64
 	scrollX    float32
@@ -149,6 +148,9 @@ type editor struct {
 	scrollbar  scrollbarDrag
 	frameNow   time.Time
 	needsBuild bool
+	// stale tells that an edit found the buffer edited since the editor
+	// followed it, for its command to run again (retry).
+	stale bool
 
 	refocus        bool
 	wholeWord      bool
@@ -165,6 +167,11 @@ type editor struct {
 	gitDiff  *gitDiff
 	brackets bracketCache
 }
+
+// lastClip is what an editor last copied, which pasting its text in any
+// editor takes the pieces and lines of, as Zed keeps them with the
+// clipboard's text. Editors build on the main thread.
+var lastClip clipboard
 
 type clipboard struct {
 	text   string
@@ -203,6 +210,9 @@ func (ed *editor) init(buf *Buffer, o options, t *ui.Theme) {
 	ed.theme = o.theme.resolve(t)
 	ed.view.theme = ed.theme
 	ed.view.readOnly = o.readOnly
+	if ed.view.buf != nil && ed.view.buf != buf {
+		ed.resetForBuffer()
+	}
 	ed.view.setBuffer(buf)
 	if ed.sels == nil {
 		ed.sels = []sel{{goal: -1, id: 0}}
@@ -258,21 +268,21 @@ func (ed *editor) wordChars() string {
 // sync follows the buffer's edits: selections, folds, diagnostics and
 // the overlays move with the text.
 func (ed *editor) sync() {
+	f := &ed.find
+	searched := !f.stale && f.version == ed.view.version
 	ed.view.sync(func(cs []change) {
-		if cs == nil {
-			n := ed.view.text.Len()
-			for i := range ed.sels {
-				s := &ed.sels[i]
-				s.anchor, s.head = min(s.anchor, n), min(s.head, n)
-			}
-			ed.folds, ed.autoclosed, ed.marked = nil, nil, nil
-			ed.diags = nil
-			return
-		}
 		for i := range ed.sels {
-			s := &ed.sels[i]
-			s.anchor = mapOffset(s.anchor, cs, biasRight)
-			s.head = mapOffset(s.head, cs, biasRight)
+			ed.sels[i] = mapSel(ed.sels[i], cs)
+		}
+		for _, h := range [][][]sel{ed.selUndo, ed.selRedo} {
+			for _, sels := range h {
+				for i := range sels {
+					sels[i] = mapSel(sels[i], cs)
+				}
+			}
+		}
+		for i := range ed.find.scope {
+			ed.find.scope[i] = mapSel(ed.find.scope[i], cs)
 		}
 		for i := range ed.folds {
 			f := &ed.folds[i]
@@ -291,16 +301,63 @@ func (ed *editor) sync() {
 			m := &ed.marked[i]
 			m.Start, m.End = mapOffset(m.Start, cs, biasLeft), mapOffset(m.End, cs, biasRight)
 		}
+		// The view stays on the line it shows.
+		ed.anchorLine = mapLine(ed.anchorLine, cs)
 		ed.complete.moved(cs)
 		ed.hover.close()
-		ed.find.stale = true
+		if searched {
+			f.moved(cs)
+		} else {
+			f.stale = true
+		}
 	})
+	if searched && !f.stale {
+		f.version = ed.view.version
+	}
 	ed.sels = mergeSels(ed.sels)
+}
+
+// mapSel moves a selection through changes: a caret with the text
+// inserted at it, and a selection keeping what it holds, the text
+// inserted at its edges left out, as Zed's anchors.
+func mapSel(s sel, cs []change) sel {
+	if s.empty() {
+		s.anchor = mapOffset(s.anchor, cs, biasRight)
+		s.head = s.anchor
+		return s
+	}
+	start, end := mapOffset(s.start(), cs, biasRight), mapOffset(s.end(), cs, biasLeft)
+	end = max(start, end)
+	if s.head < s.anchor {
+		s.head, s.anchor = start, end
+	} else {
+		s.anchor, s.head = start, end
+	}
+	return s
+}
+
+// resetForBuffer forgets what the editor knew of the buffer it showed,
+// as it shows another: its carets, folds, marks and what the app gave
+// it of the old text.
+func (ed *editor) resetForBuffer() {
+	ed.sels = []sel{{goal: -1, id: ed.nextID}}
+	ed.nextID++
+	ed.selUndo, ed.selRedo = nil, nil
+	ed.folds, ed.autoclosed, ed.marked, ed.diags = nil, nil, nil, nil
+	ed.view.inlays, ed.suggestion = nil, ""
+	ed.complete.close()
+	ed.hover.close()
+	ed.find.scope, ed.find.stale, ed.find.lowerVer, ed.find.lower = nil, true, 0, ""
+	ed.goTo.open = false
+	ed.gesture.active = false
+	ed.brackets = bracketCache{}
+	ed.scrollY, ed.scrollX, ed.anchorLine, ed.anchorOff = 0, 0, 0, 0
 }
 
 // setSels sets the selections, noting the old ones for Undo Selection.
 func (ed *editor) setSels(sels []sel, reveal reveal) {
 	if !slices.Equal(sels, ed.sels) {
+		ed.dropSuggestion()
 		ed.selUndo = append(ed.selUndo, slices.Clone(ed.sels))
 		if len(ed.selUndo) > 1024 {
 			ed.selUndo = ed.selUndo[1:]
@@ -524,10 +581,16 @@ func (ed *editor) unfoldLine(line int) {
 
 // gutterWidth returns the width of the gutter: the numbers, the fold
 // markers and the bars of changes.
+// numbersOn reports whether the gutter numbers the lines, as the options
+// say, or the opposite once Toggle Line Numbers ran.
+func (ed *editor) numbersOn() bool {
+	return (ed.o.lineNumbers != LineNumbersOff) != ed.toggledNumbers
+}
+
 func (ed *editor) gutterWidth() float32 {
 	v := &ed.view
 	w := float32(0)
-	if ed.o.lineNumbers != LineNumbersOff {
+	if ed.numbersOn() {
 		digits := max(ed.o.minDigits, len(strconv.Itoa(v.text.LineCount())))
 		w += float32(digits)*v.charWidth + v.charWidth*1.5
 	}
@@ -537,7 +600,7 @@ func (ed *editor) gutterWidth() float32 {
 	if ed.o.diffBase != nil {
 		w += 6
 	}
-	if len(ed.o.gutterMarks) > 0 && ed.o.lineNumbers == LineNumbersOff {
+	if len(ed.o.gutterMarks) > 0 && !ed.numbersOn() {
 		w += v.lineHeight * 0.7
 	}
 	if w > 0 {

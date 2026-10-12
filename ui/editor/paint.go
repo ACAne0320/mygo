@@ -2,6 +2,7 @@ package editor
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,10 @@ func (ed *editor) layout(w, h, scale float32) {
 		ww = min(ww, float32(ed.o.wrapColumn)*v.charWidth)
 	}
 	v.setWrap(wrap, max(ww, v.charWidth*8))
+	if wrap {
+		// Wrapped lines fit: nothing is sideways.
+		ed.scrollX = 0
+	}
 	v.heights.setLines(v.text.LineCount())
 	hidden := ed.hiddenSpans()
 	var blocks []block
@@ -483,8 +488,20 @@ func (ed *editor) paintWhitespace(p *ui.Painter, f *frame, l *lineLayout, row *r
 	v := &ed.view
 	ct := ed.theme
 	s := l.text
-	trailFrom := len(strings.TrimRight(s, " \t"))
-	for i := 0; i < len(s); i++ {
+	// The row's text alone, and in Selection mode only rows a selection
+	// meets.
+	a, b := l.fromDisp(row.from), l.fromDisp(row.to)
+	if mode == WhitespaceSelection && !slices.ContainsFunc(ed.sels, func(sel sel) bool {
+		return !sel.empty() && sel.start() < l.start+b && sel.end() > l.start+a
+	}) {
+		return
+	}
+	trailFrom := 0
+	if mode == WhitespaceTrailing {
+		trailFrom = len(strings.TrimRight(s, " \t"))
+		a = max(a, trailFrom)
+	}
+	for i := a; i < b; i++ {
 		c := s[i]
 		if c != ' ' && c != '\t' {
 			continue
@@ -559,7 +576,7 @@ func (ed *editor) paintGutter(p *ui.Painter, r ui.Rect, f *frame) {
 	h := &v.heights
 	lh := v.lineHeight
 	gutter := ui.Rect{X: r.X, Y: r.Y, W: ed.gutterW, H: r.H}
-	numbersOn := ed.o.lineNumbers != LineNumbersOff && !ed.toggledNumbers || ed.o.lineNumbers == LineNumbersOff && ed.toggledNumbers
+	numbersOn := ed.numbersOn()
 	cur := v.text.LineOf(ed.primary().head)
 	p.Clip(gutter, 0, func() {
 		numRight := r.X + ed.gutterW - 4 - v.charWidth*0.5

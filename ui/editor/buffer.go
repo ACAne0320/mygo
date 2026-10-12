@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/egoist/mygo/internal/diff"
 	"github.com/egoist/mygo/internal/rope"
 	"github.com/egoist/mygo/ui"
 )
@@ -23,6 +24,9 @@ import (
 // keeps versions rather than copies, and frames and other goroutines
 // read a version (Snapshot) without locks. Offsets count bytes of UTF-8,
 // and a Pos a line and the bytes into it.
+//
+// Lines end in \n, as in Zed: a text set with \r\n line endings keeps
+// \n ones, and LineEnding says which it had, which WriteTo writes.
 //
 // Methods are safe from any goroutine; schedule changes with
 // Window.Update so the window shows them.
@@ -43,6 +47,7 @@ type Buffer struct {
 	open     int
 	openTx   *transaction
 	lastEdit time.Time
+	crlf     bool // the text's line endings are \r\n
 	syntax   *syntaxState
 	// wake are the windows showing the buffer, which a highlighter
 	// working in the background has draw again.
@@ -84,10 +89,14 @@ type logEntry struct {
 type transaction struct {
 	before, after rope.Text
 	changes       [][]change
-	owner         any
-	selBefore     any
-	selAfter      any
-	kind          editKind
+	// texts are the texts the versions of the step made, one a changes,
+	// which undo and redo log as they go through them, so that each
+	// entry's text is its changes' (as tree-sitter needs).
+	texts     []rope.Text
+	owner     any
+	selBefore any
+	selAfter  any
+	kind      editKind
 }
 
 // editKind groups edits into undo steps: typing in a row is one step,
@@ -111,9 +120,50 @@ const (
 
 // NewBuffer returns a buffer holding text, which is its saved text.
 func NewBuffer(text string) *Buffer {
-	b := &Buffer{text: rope.New(text)}
+	b := &Buffer{text: rope.New(lf(text)), crlf: strings.Contains(text, "\r\n")}
 	b.saved = b.text
 	return b
+}
+
+// lf returns s with \n line endings.
+func lf(s string) string {
+	if strings.Contains(s, "\r\n") {
+		return strings.ReplaceAll(s, "\r\n", "\n")
+	}
+	return s
+}
+
+// LineEnding returns the line ending the text had as it was set, \r\n or
+// \n, which WriteTo writes; SetLineEnding changes it.
+func (b *Buffer) LineEnding() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.crlf {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+func (b *Buffer) SetLineEnding(ending string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.crlf = ending == "\r\n"
+}
+
+// writeText writes t to w with the line ending of crlf.
+func writeText(t rope.Text, crlf bool, w io.Writer) (int64, error) {
+	if !crlf {
+		return rope.WriteTo(t.Root(), w)
+	}
+	var n int64
+	var err error
+	t.Chunks(0, t.Len(), func(s string) bool {
+		var k int
+		k, err = io.WriteString(w, strings.ReplaceAll(s, "\n", "\r\n"))
+		n += int64(k)
+		return err == nil
+	})
+	return n, err
 }
 
 // snapshot returns the current text and version.
@@ -130,17 +180,19 @@ func (b *Buffer) snapshot() (rope.Text, uint64) {
 // the buffer changes: read it from any goroutine, as to save the text or
 // to send it to a language server.
 func (b *Buffer) Snapshot() Snapshot {
-	t, v := b.snapshot()
-	return Snapshot{t, v}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return Snapshot{b.text, b.version, b.crlf}
 }
 
 // String returns the text.
 func (b *Buffer) String() string { r, _ := b.snapshot(); return r.String() }
 
-// WriteTo writes the text to w, a chunk at a time, as for saving it.
+// WriteTo writes the text to w, a chunk at a time, as for saving it, with
+// its LineEnding.
 func (b *Buffer) WriteTo(w io.Writer) (int64, error) {
-	r, _ := b.snapshot()
-	return rope.WriteTo(r.Root(), w)
+	s := b.Snapshot()
+	return s.WriteTo(w)
 }
 
 // Len returns the length of the text in bytes.
@@ -205,7 +257,8 @@ func (b *Buffer) Reset(text string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	old := b.text
-	b.text = rope.New(text)
+	b.text = rope.New(lf(text))
+	b.crlf = strings.Contains(text, "\r\n")
 	b.saved = b.text
 	b.undo, b.redo, b.openTx = nil, nil, nil
 	b.record([]change{wholeChange(old, b.text)})
@@ -213,8 +266,9 @@ func (b *Buffer) Reset(text string) {
 
 // Set replaces the whole text as one edit, which Undo takes back.
 func (b *Buffer) Set(text string) {
-	r, _ := b.snapshot()
-	b.Edit(Edit{Start: 0, End: r.Len(), Text: text})
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.edit([]Edit{{Start: 0, End: b.text.Len(), Text: text}}, editOther, nil, nil)
 }
 
 // Edit applies edits to the text as one step of undo. Their offsets are
@@ -285,10 +339,14 @@ func (b *Buffer) undoStep() (transaction, bool) {
 	b.redo = append(b.redo, tx)
 	b.openTx = nil
 	b.lastEdit = time.Time{}
-	b.text = tx.before
 	for i := len(tx.changes) - 1; i >= 0; i-- {
+		b.text = tx.before
+		if i > 0 {
+			b.text = tx.texts[i-1]
+		}
 		b.record(invertChanges(tx.changes[i]))
 	}
+	b.text = tx.before
 	return tx, true
 }
 
@@ -303,10 +361,11 @@ func (b *Buffer) redoStep() (transaction, bool) {
 	b.undo = append(b.undo, tx)
 	b.openTx = nil
 	b.lastEdit = time.Time{}
-	b.text = tx.after
-	for _, c := range tx.changes {
+	for i, c := range tx.changes {
+		b.text = tx.texts[i]
 		b.record(c)
 	}
+	b.text = tx.after
 	return tx, true
 }
 
@@ -319,6 +378,15 @@ func (b *Buffer) edit(edits []Edit, kind editKind, owner, selBefore any) []chang
 	if !slices.IsSortedFunc(edits, func(x, y Edit) int { return x.Start - y.Start }) {
 		edits = slices.Clone(edits)
 		slices.SortStableFunc(edits, func(x, y Edit) int { return x.Start - y.Start })
+	}
+	cloned := false
+	for i, e := range edits {
+		if strings.Contains(e.Text, "\r\n") {
+			if !cloned {
+				edits, cloned = slices.Clone(edits), true
+			}
+			edits[i].Text = lf(e.Text)
+		}
 	}
 	before := b.text
 	text := before
@@ -357,13 +425,15 @@ func (b *Buffer) edit(edits []Edit, kind editKind, owner, selBefore any) []chang
 	case tx != nil:
 		tx.after = text
 		tx.changes = append(tx.changes, changes)
-	case kind != editOther && len(b.undo) > 0 && b.undo[len(b.undo)-1].kind == kind &&
+		tx.texts = append(tx.texts, text)
+	case b.open == 0 && kind != editOther && len(b.undo) > 0 && b.undo[len(b.undo)-1].kind == kind &&
 		b.undo[len(b.undo)-1].owner == owner && (now.Sub(b.lastEdit) < groupTimeout || kind == editCompose && !b.lastEdit.IsZero()):
 		tx := &b.undo[len(b.undo)-1]
 		tx.after = text
 		tx.changes = append(tx.changes, changes)
+		tx.texts = append(tx.texts, text)
 	default:
-		b.undo = append(b.undo, transaction{before: before, after: text, changes: [][]change{changes},
+		b.undo = append(b.undo, transaction{before: before, after: text, changes: [][]change{changes}, texts: []rope.Text{text},
 			owner: owner, selBefore: selBefore, kind: kind})
 		if len(b.undo) > undoMax {
 			b.undo = slices.Delete(b.undo, 0, len(b.undo)-undoMax)
@@ -417,9 +487,55 @@ func (b *Buffer) changesSince(since uint64) ([][]change, uint64, bool) {
 }
 
 // entriesSince returns the log's entries after version since.
+// changesTo returns the changes of the versions after since, the version
+// they lead to and its text, read at once, so that the text is the
+// changes' and not a later one's; ok false when the log no longer
+// reaches back to since.
+func (b *Buffer) changesTo(since uint64) (changes [][]change, version uint64, text rope.Text, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	entries, version, ok := b.entriesSinceLocked(since)
+	changes = make([][]change, len(entries))
+	for i, e := range entries {
+		changes[i] = e.changes
+	}
+	return changes, version, b.text, ok
+}
+
+// changesBetween returns the changes from old to new by their lines, for
+// an editor too far behind the log to follow the edits themselves.
+func changesBetween(old, new rope.Text) []change {
+	lines := func(t rope.Text) []string {
+		out := make([]string, 0, t.LineCount())
+		t.EachLine(0, t.LineCount(), func(_, _ int, s string) bool {
+			out = append(out, s)
+			return true
+		})
+		return out
+	}
+	at := func(t rope.Text, line int) int {
+		if line >= t.LineCount() {
+			return t.Len()
+		}
+		return t.LineStart(line)
+	}
+	var out []change
+	for _, h := range diff.Lines(lines(old), lines(new)) {
+		c := change{oldStart: at(old, h.A0), oldEnd: at(old, h.A1), newStart: at(new, h.B0), newEnd: at(new, h.B1)}
+		c.oldLine, c.oldEndLine = old.LineOf(c.oldStart), old.LineOf(c.oldEnd)
+		c.newLine, c.newEndLine = new.LineOf(c.newStart), new.LineOf(c.newEnd)
+		out = append(out, c)
+	}
+	return out
+}
+
 func (b *Buffer) entriesSince(since uint64) ([]logEntry, uint64, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.entriesSinceLocked(since)
+}
+
+func (b *Buffer) entriesSinceLocked(since uint64) ([]logEntry, uint64, bool) {
 	if since == b.version {
 		return nil, b.version, true
 	}
@@ -499,6 +615,12 @@ func mapOffset(off int, changes []change, b bias) int {
 	if i == 0 {
 		return off
 	}
+	if b == biasLeft {
+		// Before every insertion at off, not only the last.
+		for i > 1 && changes[i-2].oldStart == off {
+			i--
+		}
+	}
 	c := changes[i-1]
 	switch {
 	case off > c.oldEnd || off == c.oldEnd && c.oldEnd > c.oldStart:
@@ -556,6 +678,7 @@ func offsetOf(t rope.Text, p Pos) int {
 type Snapshot struct {
 	t       rope.Text
 	version uint64
+	crlf    bool
 }
 
 // Version returns the buffer's version the snapshot is of.
@@ -591,7 +714,7 @@ func (s Snapshot) Slice(start, end int) string { return s.t.Slice(start, end) }
 func (s Snapshot) Chunks(start, end int, fn func(text string) bool) { s.t.Chunks(start, end, fn) }
 
 // WriteTo writes the text to w.
-func (s Snapshot) WriteTo(w io.Writer) (int64, error) { return rope.WriteTo(s.t.Root(), w) }
+func (s Snapshot) WriteTo(w io.Writer) (int64, error) { return writeText(s.t, s.crlf, w) }
 
 // Change is a range of a text an edit replaced: bytes OldStart to OldEnd
 // of the text before the edit, which are bytes NewStart to NewEnd of the

@@ -11,6 +11,7 @@ const bracketScanLines = 1000
 // for a version and a caret.
 type bracketCache struct {
 	version     uint64
+	hlGen       int
 	at          int
 	open, close Range
 	ok          bool
@@ -132,11 +133,11 @@ func (v *view) lineTokens(i int, s string) []Token {
 // the ranges of the opening and the closing one, as Zed highlights.
 func (ed *editor) enclosingBrackets(off int) (Range, Range, bool) {
 	c := &ed.brackets
-	if c.valid && c.version == ed.view.version && c.at == off {
+	if c.valid && c.version == ed.view.version && c.hlGen == ed.view.hlGen && c.at == off {
 		return c.open, c.close, c.ok
 	}
 	open, close, ok := ed.bracketsAround(off, off)
-	*c = bracketCache{version: ed.view.version, at: off, open: open, close: close, ok: ok, valid: true}
+	*c = bracketCache{version: ed.view.version, hlGen: ed.view.hlGen, at: off, open: open, close: close, ok: ok, valid: true}
 	return open, close, ok
 }
 

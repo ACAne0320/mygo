@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -45,6 +46,10 @@ func (d *diffModel) update() bool {
 	if d.old == nil || d.new == nil {
 		changed := d.hunks != nil
 		d.hunks = nil
+		if changed {
+			d.version++
+			d.words = nil
+		}
 		return changed
 	}
 	oldText, oldVer := d.old.snapshot()
@@ -55,9 +60,14 @@ func (d *diffModel) update() bool {
 	if d.old == d.new {
 		changed := d.hunks != nil
 		d.hunks, d.oldVer, d.newVer = nil, oldVer, newVer
+		d.oldText, d.newText = oldText, newText
+		if changed {
+			d.version++
+			d.words = nil
+		}
 		return changed
 	}
-	if oldVer != d.oldVer {
+	if oldVer != d.oldVer || newText.Len() == 0 || d.newText.Len() == 0 {
 		d.full(oldText, newText, oldVer, newVer)
 		return true
 	}
@@ -81,15 +91,18 @@ func (d *diffModel) update() bool {
 	touched := make([]bool, len(d.hunks))
 	for _, cs := range changes {
 		for _, c := range cs {
-			delta := (c.newEndLine - c.newLine) - (c.oldEndLine - c.oldLine)
+			// The lines the change replaced, where the changes before it
+			// in its version put them, as the hunks and dirty lines are.
+			lo, hi := c.newLine, c.newLine+c.oldEndLine-c.oldLine
+			delta := (c.newEndLine - c.newLine) - (hi - lo)
 			// The dirty lines after the change move with it.
 			if dirtyFrom >= 0 {
-				if dirtyFrom > c.oldEndLine {
+				if dirtyFrom > hi {
 					dirtyFrom += delta
 				}
-				if dirtyTo > c.oldEndLine {
+				if dirtyTo > hi {
 					dirtyTo += delta
-				} else if dirtyTo >= c.oldLine {
+				} else if dirtyTo >= lo {
 					dirtyTo = max(dirtyTo+delta, c.newEndLine)
 				}
 			}
@@ -97,8 +110,8 @@ func (d *diffModel) update() bool {
 			for i := range d.hunks {
 				h := &d.hunks[i]
 				switch {
-				case h.B1 < c.oldLine && h.B0 < c.oldLine:
-				case h.B0 > c.oldEndLine+1:
+				case h.B1 < lo && h.B0 < lo:
+				case h.B0 > hi+1:
 					h.B0 += delta
 					h.B1 += delta
 				default:
@@ -125,9 +138,10 @@ func (d *diffModel) full(oldText, newText rope.Text, oldVer, newVer uint64) {
 	d.words = nil
 }
 
-// ropeLines returns lines from to to of r.
+// ropeLines returns lines from to to of r: none of an empty text, which
+// a diff takes as no lines rather than one empty line, as git does.
 func ropeLines(r rope.Text, from, to int) []string {
-	if from >= to {
+	if from >= to || r.Len() == 0 {
 		return nil
 	}
 	s := r.Slice(r.LineStart(from), r.LineEnd(to-1))
@@ -261,6 +275,23 @@ func (d *diffModel) hunkAtNew(n int) int {
 		if h.B0 <= n && n < h.B1 || h.B0 == h.B1 && h.B0 == n {
 			return i
 		}
+	}
+	if k := d.pastEnd(); k >= 0 && n == d.newText.LineCount()-1 {
+		return k
+	}
+	return -1
+}
+
+// pastEnd returns the hunk deleting lines after the new text's last line,
+// as when a text without a final newline loses its last lines, which goes
+// with the last line, as no caret nor gutter row is past it; or -1.
+func (d *diffModel) pastEnd() int {
+	k := len(d.hunks) - 1
+	if k < 0 {
+		return -1
+	}
+	if h := d.hunks[k]; h.B0 == h.B1 && h.B0 >= d.newText.LineCount() {
+		return k
 	}
 	return -1
 }
@@ -477,5 +508,24 @@ func (d *diffModel) hunksTouching(from, to int) []int {
 			out = append(out, i)
 		}
 	}
+	if k := d.pastEnd(); k >= 0 && to >= d.newText.LineCount()-1 && !slices.Contains(out, k) {
+		out = append(out, k)
+	}
 	return out
+}
+
+// newLineOf returns the new line an unchanged old line is, and false for
+// a line a hunk changes.
+func (d *diffModel) newLineOf(old int) (int, bool) {
+	delta := 0
+	for _, h := range d.hunks {
+		if old < h.A0 {
+			break
+		}
+		if old < h.A1 {
+			return 0, false
+		}
+		delta = h.B1 - h.A1
+	}
+	return old + delta, true
 }

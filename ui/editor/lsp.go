@@ -278,11 +278,16 @@ func (ed *editor) acceptCompletion() bool {
 	}
 	p := ed.primary()
 	n := p.head - cc.at
+	typed := ed.slice(cc.at, p.head)
 	cc.close()
-	// The same word length before every caret goes.
+	// The word typed goes where the other carets have it before them too,
+	// as Zed's; elsewhere the completion goes in at the caret.
 	var edits []Edit
 	for _, s := range ed.sels {
-		a := max(0, s.head-n)
+		a := s.start()
+		if s.head-n >= 0 && ed.slice(s.head-n, s.head) == typed {
+			a = s.head - n
+		}
 		edits = append(edits, Edit{Start: a, End: s.end(), Text: ins})
 	}
 	sels := slices.Clone(ed.sels)
@@ -395,6 +400,15 @@ func (ed *editor) acceptSuggestion() bool {
 		}
 	}
 	return false
+}
+
+// dropSuggestion takes the suggestion away, as an edit or a move of the
+// caret does.
+func (ed *editor) dropSuggestion() {
+	if ed.suggestion == "" {
+		return
+	}
+	ed.setSuggestion(0, "")
 }
 
 // setSuggestion shows text at off, which Tab inserts.

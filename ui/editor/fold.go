@@ -219,7 +219,7 @@ func (ed *editor) foldLevel(level int) bool {
 			ed.folds = append(ed.folds, f)
 		}
 	}
-	ed.afterFold(0)
+	ed.needsBuild = true
 	ed.moveOutOfFolds()
 	return true
 }

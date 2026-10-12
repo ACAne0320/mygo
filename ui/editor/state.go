@@ -210,14 +210,14 @@ func (st *State) SelectedText() string {
 // Insert replaces each selection with text, as typing or pasting it.
 func (st *State) Insert(text string) {
 	st.ensure()
-	st.ed.paste(text)
+	st.ed.retry(func() bool { st.ed.paste(text); return true })
 }
 
 // Run runs a command as its key would, and reports whether it did
 // something.
 func (st *State) Run(cmd Command) bool {
 	st.ensure()
-	return st.ed.run(cmd)
+	return st.ed.retry(func() bool { return st.ed.run(cmd) })
 }
 
 // GoTo puts the caret at a line and column, from 0, and scrolls it to
@@ -289,14 +289,20 @@ func (st *State) SetDiagnostics(version uint64, ds []Diagnostic) {
 	ed := &st.ed
 	ed.sync()
 	ds = slices.Clone(ds)
-	if version != ed.view.version && version != 0 {
-		changes, _, ok := st.Buffer.changesSince(version)
+	if version != ed.view.version {
+		// Moved through the edits since, up to the text the editor shows.
+		entries, _, ok := st.Buffer.entriesSince(version)
 		if !ok {
 			return
 		}
-		for _, cs := range changes {
+		for _, e := range entries {
+			if e.version > ed.view.version {
+				break
+			}
 			for i := range ds {
-				ds[i].Start, ds[i].End = mapOffset(ds[i].Start, cs, biasRight), mapOffset(ds[i].End, cs, biasLeft)
+				d := &ds[i]
+				d.Start, d.End = mapOffset(d.Start, e.changes, biasRight), mapOffset(d.End, e.changes, biasLeft)
+				d.End = max(d.End, d.Start)
 			}
 		}
 	}

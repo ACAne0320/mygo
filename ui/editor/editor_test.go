@@ -61,16 +61,17 @@ func (ct *editorTest) show() string {
 	sels := ct.st.Selections()
 	var b strings.Builder
 	for i := 0; i <= len(text); i++ {
+		// A selection ending here first, then those starting.
+		for _, s := range sels {
+			if !s.Empty() && s.End() == i {
+				b.WriteByte(']')
+			}
+		}
 		for _, s := range sels {
 			if s.Empty() && s.Head == i {
 				b.WriteByte('|')
 			} else if !s.Empty() && s.Start() == i {
 				b.WriteByte('[')
-			}
-		}
-		for _, s := range sels {
-			if !s.Empty() && s.End() == i {
-				b.WriteByte(']')
 			}
 		}
 		if i < len(text) {
@@ -240,10 +241,11 @@ func TestCodeEditorLines(t *testing.T) {
 	ct.want("one\nthree\ntw|o")
 	ct.key(ui.Alt|ui.Shift, ui.KeyUp)
 	ct.want("one\nthree\ntw|o\ntwo")
+	// Deleting a line keeps the caret's column, as Zed's.
 	ct.key(ui.Cmd|ui.Shift, ui.KeyK)
-	ct.want("one\nthree\n|two")
+	ct.want("one\nthree\ntw|o")
 	ct.key(ui.Ctrl, ui.KeyJ)
-	ct.want("one\nthree\n|two")
+	ct.want("one\nthree\ntw|o")
 	ct = newEditorTest(t, "go", "a|\n  b\nc")
 	ct.key(ui.Ctrl, ui.KeyJ)
 	ct.want("a |b\nc")

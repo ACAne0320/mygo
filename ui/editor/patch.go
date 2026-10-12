@@ -3,6 +3,7 @@ package editor
 import (
 	"errors"
 	"fmt"
+	"github.com/egoist/mygo/internal/diff"
 	"strconv"
 	"strings"
 )
@@ -39,7 +40,9 @@ type PatchHunk struct {
 // git diff and git format-patch, with renames, modes and new and deleted
 // files, and those of diff -u.
 func ParsePatch(text string) ([]FilePatch, error) {
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	// Lines split at \n alone: the lines of a file with \r\n endings keep
+	// their \r, as Apply needs, and only the headers lose it.
+	lines := strings.Split(text, "\n")
 	var files []FilePatch
 	var cur *FilePatch
 	start := func() *FilePatch {
@@ -47,7 +50,7 @@ func ParsePatch(text string) ([]FilePatch, error) {
 		return &files[len(files)-1]
 	}
 	for i := 0; i < len(lines); i++ {
-		line := lines[i]
+		line := strings.TrimSuffix(lines[i], "\r")
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			cur = start()
@@ -63,9 +66,13 @@ func ParsePatch(text string) ([]FilePatch, error) {
 		case cur != nil && strings.HasPrefix(line, "new mode "):
 			cur.NewMode = strings.TrimPrefix(line, "new mode ")
 		case cur != nil && strings.HasPrefix(line, "rename from "):
-			cur.OldName = strings.TrimPrefix(line, "rename from ")
+			cur.OldName = unquoteName(strings.TrimPrefix(line, "rename from "))
 		case cur != nil && strings.HasPrefix(line, "rename to "):
-			cur.NewName = strings.TrimPrefix(line, "rename to ")
+			cur.NewName = unquoteName(strings.TrimPrefix(line, "rename to "))
+		case cur != nil && strings.HasPrefix(line, "copy from "):
+			cur.OldName = unquoteName(strings.TrimPrefix(line, "copy from "))
+		case cur != nil && strings.HasPrefix(line, "copy to "):
+			cur.NewName = unquoteName(strings.TrimPrefix(line, "copy to "))
 		case cur != nil && (strings.HasPrefix(line, "Binary files ") || line == "GIT binary patch"):
 			cur.Binary = true
 		case strings.HasPrefix(line, "--- ") && i+1 < len(lines) && strings.HasPrefix(lines[i+1], "+++ "):
@@ -75,7 +82,7 @@ func ParsePatch(text string) ([]FilePatch, error) {
 			if a := patchName(line[4:], "a/"); a != "" || cur.OldName == "" {
 				cur.OldName = a
 			}
-			if b := patchName(lines[i+1][4:], "b/"); b != "" || cur.NewName == "" {
+			if b := patchName(strings.TrimSuffix(lines[i+1], "\r")[4:], "b/"); b != "" || cur.NewName == "" {
 				cur.NewName = b
 			}
 			i++
@@ -97,16 +104,19 @@ func ParsePatch(text string) ([]FilePatch, error) {
 					newLeft--
 				case strings.HasPrefix(l, "-"):
 					oldLeft--
-				case strings.HasPrefix(l, " "), l == "":
+				case strings.HasPrefix(l, " "), l == "", l == "\r":
 					// An empty line is a blank line of both, as some tools
 					// strip the space.
-					if l == "" {
-						l = " "
+					if !strings.HasPrefix(l, " ") {
+						l = " " + l
 					}
 					oldLeft--
 					newLeft--
 				default:
 					return files, fmt.Errorf("line %d: unexpected %q in a hunk", i+2, l)
+				}
+				if oldLeft < 0 || newLeft < 0 {
+					return files, fmt.Errorf("line %d: hunk %q has more lines than it counts", i+2, line)
 				}
 				h.Lines = append(h.Lines, l)
 				i++
@@ -122,8 +132,19 @@ func ParsePatch(text string) ([]FilePatch, error) {
 
 // gitNames splits the names of "diff --git a/x b/x".
 func gitNames(s string) (string, string, bool) {
+	// Names git quotes, as C strings, when they hold spaces, quotes or
+	// characters past ASCII.
 	if strings.HasPrefix(s, "\"") {
-		return "", "", false
+		q, err := strconv.QuotedPrefix(s)
+		if err != nil {
+			return "", "", false
+		}
+		a := unquoteName(q)
+		b := unquoteName(strings.TrimPrefix(s[len(q):], " "))
+		return strings.TrimPrefix(a, "a/"), strings.TrimPrefix(b, "b/"), true
+	}
+	if i := strings.Index(s, " \"b/"); i >= 0 {
+		return strings.TrimPrefix(s[:i], "a/"), strings.TrimPrefix(unquoteName(s[i+1:]), "b/"), true
 	}
 	// The names are equal but for their prefixes unless renamed, which
 	// rename lines then tell.
@@ -137,6 +158,16 @@ func gitNames(s string) (string, string, bool) {
 		return strings.TrimPrefix(s[:i], "a/"), s[i+3:], true
 	}
 	return "", "", false
+}
+
+// unquoteName unquotes a name git quoted, as "a/\346\226\207.txt".
+func unquoteName(s string) string {
+	if strings.HasPrefix(s, "\"") {
+		if u, err := strconv.Unquote(s); err == nil {
+			return u
+		}
+	}
+	return s
 }
 
 // patchName reads the name of a --- or +++ line, "" for /dev/null.
@@ -262,6 +293,7 @@ type diffPartial struct {
 	oldStarts, newStarts []int // the line of the texts each hunk starts at
 	oldFile, newFile     []int // and of the files, from 0
 	headers              []string
+	old, new             *Buffer // the texts made of the hunks' lines
 }
 
 // SetPatch shows a file's patch without the files: its hunks' lines,
@@ -272,7 +304,12 @@ func (d *DiffState) SetPatch(p FilePatch) {
 	var old, nw strings.Builder
 	pt := &diffPartial{}
 	oldLine, newLine := 0, 0
+	// The changes are the patch's runs of - and + lines, as it says them,
+	// not what comparing the texts would find.
+	var hunks []diff.Hunk
+	run := -1
 	for _, h := range p.Hunks {
+		run = -1
 		pt.oldStarts = append(pt.oldStarts, oldLine)
 		pt.newStarts = append(pt.newStarts, newLine)
 		pt.oldFile = append(pt.oldFile, max(0, h.OldStart-1))
@@ -286,18 +323,33 @@ func (d *DiffState) SetPatch(p FilePatch) {
 			if l == "" || l[0] == '\\' {
 				continue
 			}
+			switch {
+			case l[0] != '-' && l[0] != '+':
+				run = -1
+			case run < 0:
+				hunks = append(hunks, diff.Hunk{A0: oldLine, A1: oldLine, B0: newLine, B1: newLine})
+				run = len(hunks) - 1
+			}
+			if run >= 0 {
+				if l[0] == '-' {
+					hunks[run].A1++
+				} else {
+					hunks[run].B1++
+				}
+			}
+			text := strings.TrimSuffix(l[1:], "\r")
 			if l[0] != '+' {
 				if oldLine > 0 {
 					old.WriteByte('\n')
 				}
-				old.WriteString(l[1:])
+				old.WriteString(text)
 				oldLine++
 			}
 			if l[0] != '-' {
 				if newLine > 0 {
 					nw.WriteByte('\n')
 				}
-				nw.WriteString(l[1:])
+				nw.WriteString(text)
 				newLine++
 			}
 		}
@@ -311,9 +363,16 @@ func (d *DiffState) SetPatch(p FilePatch) {
 		d.Old.SetLanguage(l)
 		d.New.SetLanguage(l)
 	}
+	pt.old, pt.new = d.Old, d.New
 	d.partial = pt
 	d.Editable = false
 	d.prepared = diffPrepared{}
+	m := &d.model
+	m.set(d.Old, d.New)
+	m.oldText, m.oldVer = d.Old.snapshot()
+	m.newText, m.newVer = d.New.snapshot()
+	m.hunks, m.words = hunks, nil
+	m.version++
 }
 
 // fileLine maps a line of a side's text to the file's.

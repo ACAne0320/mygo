@@ -228,9 +228,17 @@ func (s *diffSide) blockInput(ed *editor, b *block, ev ui.InputEvent, r ui.Rect)
 		case blockDeleted:
 			// Lines of the old text: their numbers select them.
 			if ev.X < ed.gutterW && d.LineSelection && ev.Kind == ui.InputPointerDown {
+				// The line by the heights of its rows and annotations.
 				lh := ed.view.lineHeight
-				line := b.from + int((ev.Y-r.Y)/lh)
-				d.selectLine(DiffOld, min(line, b.to-1), ev.Mods&ui.Shift != 0)
+				y, line := r.Y, b.to-1
+				for l := b.from; l < b.to; l++ {
+					y += float32(d.oldView.heights.wraps.rows(l))*lh + d.annotationHeight(DiffOld, l)
+					if ev.Y < y {
+						line = l
+						break
+					}
+				}
+				d.selectLine(DiffOld, line, ev.Mods&ui.Shift != 0)
 				return true
 			}
 			return true
@@ -268,58 +276,81 @@ func (s *diffSide) buildBlocks(c *ui.Context, ed *editor) {
 	if s.old {
 		side = DiffOld
 	}
-	// Annotations under their lines.
+	// Annotations under their lines, after one another on a line.
 	if d.RenderAnnotation != nil && len(d.Annotations) > 0 {
+		stacked := map[[2]int]float64{} // by where they go: 0 a line, 1 a deleted line
 		for _, a := range d.Annotations {
 			var top float64
+			var at [2]int
+			line := a.Line
+			if s.unified && a.Side == DiffOld {
+				if nl, ok := d.model.newLineOf(a.Line); ok {
+					line = nl
+				} else {
+					line = -1
+				}
+			}
 			switch {
-			case a.Side == side:
-				if a.Line < first || a.Line > last {
+			case a.Side == side || s.unified && a.Side == DiffOld && line >= 0:
+				if line < first || line > last {
 					continue
 				}
-				g := h.geometry(a.Line)
+				g := h.geometry(line)
 				if g.hidden {
 					continue
 				}
 				top = g.below
 				// After the blocks below it that come first.
-				_, below := h.blocksOf(a.Line)
+				_, below := h.blocksOf(line)
 				for _, b := range below {
 					if b.kind == blockAnnotation {
 						break
 					}
 					top += float64(b.height)
 				}
+				at = [2]int{0, line}
 			case s.unified && a.Side == DiffOld:
 				// In the block of deleted lines it is in.
 				found := false
 				for line := first; line <= last && !found; line++ {
-					above, _ := h.blocksOf(line)
+					above, below := h.blocksOf(line)
 					g := h.geometry(line)
-					bt := g.top
-					for _, b := range above {
-						if b.kind == blockDeleted && a.Line >= b.from && a.Line < b.to {
-							off := bt
-							for l := b.from; l <= a.Line; l++ {
-								off += float64(float32(d.oldView.heights.wraps.rows(l)) * v.lineHeight)
-								if l < a.Line {
-									off += float64(d.annotationHeight(DiffOld, l))
+					for _, blks := range [][]block{above, below} {
+						bt := g.top
+						if len(blks) > 0 && blks[0].below {
+							bt = g.below
+						}
+						for _, b := range blks {
+							if b.kind == blockDeleted && a.Line >= b.from && a.Line < b.to {
+								off := bt
+								for l := b.from; l <= a.Line; l++ {
+									off += float64(float32(d.oldView.heights.wraps.rows(l)) * v.lineHeight)
+									if l < a.Line {
+										off += float64(d.annotationHeight(DiffOld, l))
+									}
 								}
+								top, found = off, true
+								break
 							}
-							top, found = off, true
+							bt += float64(b.height)
+						}
+						if found {
 							break
 						}
-						bt += float64(b.height)
 					}
 				}
 				if !found {
 					continue
 				}
+				at = [2]int{1, a.Line}
 			default:
 				continue
 			}
+			top += stacked[at]
+			n := stacked[at]
+			stacked[at] += float64(a.Height)
 			a := a
-			box := ui.Box(c).Key(fmt.Sprint("annotation ", a.Side, " ", a.Line, " ", a.Key)).Absolute().
+			box := ui.Box(c).Key(fmt.Sprint("annotation ", a.Side, " ", a.Line, " ", a.Key, " ", n)).Absolute().
 				Left(ed.gutterW).Top(float32(top - ed.scrollY)).Width(ed.r.W - ed.gutterW).Height(a.Height).HandleInput(shield)
 			box.Children(func() { d.RenderAnnotation(c, a) })
 		}

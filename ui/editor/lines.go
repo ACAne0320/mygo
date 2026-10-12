@@ -47,14 +47,34 @@ func (ed *editor) deleteLines() bool {
 		}
 		edits = append(edits, Edit{Start: a, End: z})
 	}
+	// The carets keep their columns on the lines taking the place of
+	// those deleted, as Zed's.
 	sels := slices.Clone(ed.sels)
+	cols := make([]int, len(sels))
+	for i, s := range sels {
+		cols[i] = utf8.RuneCountInString(r.Slice(r.LineStart(r.LineOf(s.head)), s.head))
+	}
 	return ed.apply(edits, editOther, func(move func(int, bias) int) []sel {
+		t, _ := ed.buf().snapshot()
 		for i := range sels {
 			at := move(sels[i].head, biasLeft)
-			sels[i].collapse(at)
+			line := t.LineOf(at)
+			a, z := t.LineStart(line), t.LineEnd(line)
+			sels[i].collapse(a + byteOfRuneIn(t.Slice(a, z), cols[i]))
 		}
 		return sels
 	})
+}
+
+// byteOfRuneIn returns the byte of rune n of s, its end past its runes.
+func byteOfRuneIn(s string, n int) int {
+	for i := range s {
+		if n == 0 {
+			return i
+		}
+		n--
+	}
+	return len(s)
 }
 
 // moveLines moves the lines of the selections up or down a line, with
@@ -89,7 +109,7 @@ func (ed *editor) moveLines(dir int) bool {
 		for i := range sels {
 			s := &sels[i]
 			for _, sh := range shifts {
-				if s.start() >= sh.from && s.end() <= sh.to {
+				if s.start() >= sh.from && s.end() <= sh.to+1 {
 					s.anchor += sh.by
 					s.head += sh.by
 					break
@@ -128,16 +148,29 @@ func (ed *editor) duplicateLines(up bool) bool {
 	return ed.apply(edits, editOther, func(move func(int, bias) int) []sel {
 		for i := range sels {
 			s := &sels[i]
-			by := 0
-			if !up {
-				line := r.LineOf(s.start())
-				for _, sp := range spans {
-					if line >= sp.from && line <= sp.to {
-						by = r.LineEnd(sp.to) - r.LineStart(sp.from) + 1
-					}
+			// A selection of the lines copied goes with the copy below
+			// them, or stays above it; the others move with the text.
+			a, _ := ed.lineSpanOf(*s)
+			in := -1
+			for k, sp := range spans {
+				if a >= sp.from && a <= sp.to {
+					in = k
 				}
 			}
-			s.anchor, s.head = move(s.anchor, biasLeft)+by, move(s.head, biasLeft)+by
+			if in < 0 {
+				s.anchor, s.head = move(s.anchor, biasLeft), move(s.head, biasLeft)
+				continue
+			}
+			if !up {
+				sp := spans[in]
+				by := r.LineEnd(sp.to) - r.LineStart(sp.from) + 1
+				// Moved by the copies of the spans above, and its own.
+				before := move(r.LineStart(sp.from), biasLeft) - r.LineStart(sp.from)
+				s.anchor, s.head = s.anchor+before+by, s.head+before+by
+				continue
+			}
+			before := move(r.LineStart(spans[in].from), biasLeft) - r.LineStart(spans[in].from)
+			s.anchor, s.head = s.anchor+before, s.head+before
 		}
 		return sels
 	})
@@ -200,6 +233,10 @@ func (ed *editor) transpose() bool {
 		if a >= at || z <= at || a < r.LineStart(line) {
 			continue
 		}
+		if n := len(edits); n > 0 && a < edits[n-1].End {
+			// Next to the caret before, whose swap took these characters.
+			continue
+		}
 		edits = append(edits, Edit{Start: a, End: z, Text: r.Slice(at, z) + r.Slice(a, at)})
 		sels[i].collapse(z)
 	}
@@ -259,8 +296,9 @@ func (ed *editor) indentLines(dir int) bool {
 // across lines.
 func (ed *editor) tab() bool {
 	r := &ed.view.text
+	// A selection indents its lines, as Zed's.
 	for _, s := range ed.sels {
-		if !s.empty() && r.LineOf(s.start()) != r.LineOf(s.end()) {
+		if !s.empty() {
 			return ed.indentLines(1)
 		}
 	}
@@ -269,9 +307,22 @@ func (ed *editor) tab() bool {
 		if ed.hardTabs() {
 			return "\t"
 		}
-		col := utf8.RuneCountInString(r.Slice(r.LineStart(r.LineOf(s.start())), s.start()))
+		col := columnOf(r.Slice(r.LineStart(r.LineOf(s.start())), s.start()), tab)
 		return spaces(tab - col%tab)
 	})
+}
+
+// columnOf returns the column after s, tabs going to tab stops.
+func columnOf(s string, tab int) int {
+	col := 0
+	for _, c := range s {
+		if c == '\t' {
+			col += tab - col%tab
+		} else {
+			col++
+		}
+	}
+	return col
 }
 
 // toggleComment comments the lines of the selections out with the
@@ -406,7 +457,29 @@ func (ed *editor) manipulateLines(cmd Command) bool {
 		}
 		edits = append(edits, Edit{Start: a, End: z, Text: strings.Join(lines, "\n")})
 	}
-	return ed.apply(edits, editOther, nil)
+	// Selections select their lines as they come out; carets stay.
+	sels := slices.Clone(ed.sels)
+	return ed.apply(edits, editOther, func(move func(int, bias) int) []sel {
+		t, _ := ed.buf().snapshot()
+		for i := range sels {
+			s := &sels[i]
+			if s.empty() {
+				s.collapse(min(s.head, t.Len()))
+				continue
+			}
+			for _, e := range edits {
+				if s.start() >= e.Start && s.end() <= e.End+1 {
+					a := move(e.Start, biasLeft)
+					s.anchor, s.head = a, a+len(e.Text)
+					if s.end() > e.End {
+						s.head = min(t.Len(), s.head+1)
+					}
+					break
+				}
+			}
+		}
+		return sels
+	})
 }
 
 // convertCase converts the case of each selection, or of the word at a

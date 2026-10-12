@@ -47,7 +47,7 @@ func (ed *editor) selectNext(prev bool) bool {
 
 func (ed *editor) selected(a, b int) bool {
 	for _, s := range ed.sels {
-		if s.start() == a && s.end() == b {
+		if s.start() < b && s.end() > a {
 			return true
 		}
 	}

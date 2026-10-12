@@ -69,6 +69,9 @@ func (d *DiffState) prepare() {
 	lh := viewB.lineHeight
 	var hideA, hideB []lineSpan
 	var blkA, blkB []block
+	// Blocks below a line that go after its annotations, as the separator
+	// of the lines after the last change.
+	var lateA, lateB []block
 	for gi, g := range gaps {
 		if g.hidden <= 0 {
 			continue
@@ -84,14 +87,34 @@ func (d *DiffState) prepare() {
 			}
 			return b
 		}
-		blkA = append(blkA, sep(gi, g.hideA, viewA.text.LineCount()))
-		blkB = append(blkB, sep(gi, g.hideB, viewB.text.LineCount()))
+		for _, side := range []struct {
+			blks, late *[]block
+			from, n    int
+		}{{&blkA, &lateA, g.hideA, viewA.text.LineCount()}, {&blkB, &lateB, g.hideB, viewB.text.LineCount()}} {
+			b := sep(gi, side.from, side.n)
+			if b.below {
+				*side.late = append(*side.late, b)
+			} else {
+				*side.blks = append(*side.blks, b)
+			}
+		}
 	}
-	// A patch's hunks under their headers.
+	// A patch's hunks under their headers: above their first line, or,
+	// for a hunk with no lines left on a side, below its last line, after
+	// what the hunk before puts there (late).
 	if pt := d.partial; pt != nil {
+		header := func(blks, late *[]block, start, n, k int, h string) {
+			b := block{kind: blockHeader, height: diffSeparatorHeight, line: start, hunk: k, id: h}
+			if start >= n {
+				b.line, b.below = max(0, n-1), true
+				*late = append(*late, b)
+				return
+			}
+			*blks = append(*blks, b)
+		}
 		for k, h := range pt.headers {
-			blkA = append(blkA, block{kind: blockHeader, height: diffSeparatorHeight, line: min(pt.oldStarts[k], max(0, viewA.text.LineCount()-1)), hunk: k, id: h})
-			blkB = append(blkB, block{kind: blockHeader, height: diffSeparatorHeight, line: min(pt.newStarts[k], max(0, viewB.text.LineCount()-1)), hunk: k, id: h})
+			header(&blkA, &lateA, pt.oldStarts[k], viewA.text.LineCount(), k, h)
+			header(&blkB, &lateB, pt.newStarts[k], viewB.text.LineCount(), k, h)
 		}
 	}
 	anns := [2]map[int]float32{{}, {}}
@@ -107,7 +130,7 @@ func (d *DiffState) prepare() {
 					height += rowsOf(viewA, i) + anns[DiffOld][i]
 				}
 				b := block{kind: blockDeleted, height: height, from: h.A0, to: h.A1, hunk: hi}
-				if h.B0 < viewB.text.LineCount() && !(h.B0 == h.B1 && h.B0 == viewB.text.LineCount()-1 && false) {
+				if h.B0 < viewB.text.LineCount() {
 					b.line = h.B0
 				} else {
 					b.line, b.below = viewB.text.LineCount()-1, true
@@ -115,10 +138,17 @@ func (d *DiffState) prepare() {
 				blkB = append(blkB, b)
 			}
 		}
+		// The old text's annotations on unchanged lines go under the same
+		// lines of the new text, as only those show.
+		for line, height := range anns[DiffOld] {
+			if nl, ok := d.model.newLineOf(line); ok {
+				anns[DiffNew][nl] += height
+			}
+		}
 		for line, height := range anns[DiffNew] {
 			blkB = append(blkB, block{kind: blockAnnotation, line: line, below: true, height: height, id: line})
 		}
-		d.setSide(1, hideB, blkB)
+		d.setSide(1, hideB, sticky(append(blkB, lateB...)))
 		return
 	}
 	// Side by side: walk the rows of each hunk, the shorter side's lines
@@ -231,8 +261,20 @@ func (d *DiffState) prepare() {
 		}
 	}
 	unchanged(prevA, prevB, min(sides[0].n-prevA, sides[1].n-prevB))
-	d.setSide(0, hideA, blkA)
-	d.setSide(1, hideB, blkB)
+	d.setSide(0, hideA, sticky(append(blkA, lateA...)))
+	d.setSide(1, hideB, sticky(append(blkB, lateB...)))
+}
+
+// sticky keeps the blocks that stand for lines, as separators, deleted
+// lines and fillers, where their line is hidden, as with no context
+// lines; annotations go with the line they are under.
+func sticky(blks []block) []block {
+	for i := range blks {
+		if blks[i].kind != blockAnnotation {
+			blks[i].sticky = true
+		}
+	}
+	return blks
 }
 
 // setSide gives side i its hidden lines and blocks, keeping those it has
@@ -284,9 +326,17 @@ func (d *DiffState) gaps(nOld, nNew int) []diffGap {
 			if g.after {
 				bottom = 0
 			}
-			e := d.expanded[pa]
-			top += e.top
-			bottom += e.bottom
+			// And the lines expanded at either edge.
+			if top < n {
+				if end := d.revealedAt(pa + top); end >= 0 {
+					top = min(n, end+1-pa)
+				}
+			}
+			if bottom < n {
+				if first := d.revealedBefore(pa + n - 1 - bottom); first >= 0 {
+					bottom = min(n, pa+n-first)
+				}
+			}
 			hidden := n - top - bottom
 			// One line alone shows rather than collapsing.
 			if hidden > 1 {

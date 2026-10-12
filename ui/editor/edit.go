@@ -20,13 +20,16 @@ func (ed *editor) apply(edits []Edit, kind editKind, after func(move func(int, b
 	before := slices.Clone(ed.sels)
 	b.mu.Lock()
 	if b.version != ed.view.version {
-		// The buffer changed since this editor last looked: follow it
-		// first, and leave this edit, made for the text before.
+		// The buffer changed since this editor last looked, as another
+		// goroutine edited it: the edit, made for the text before, is
+		// left for its command to run again on the text as it is
+		// (retry).
 		b.mu.Unlock()
-		ed.sync()
+		ed.stale = true
 		return false
 	}
 	changes := b.edit(edits, kind, ed, before)
+	made := b.version
 	b.mu.Unlock()
 	if changes == nil {
 		// The edits change nothing, as pasting the text selected over
@@ -43,6 +46,7 @@ func (ed *editor) apply(edits []Edit, kind editKind, after func(move func(int, b
 		ed.blinkStart = time.Now()
 		return true
 	}
+	ed.dropSuggestion()
 	move := func(off int, bias bias) int { return mapOffset(off, changes, bias) }
 	var sels []sel
 	if after != nil {
@@ -50,6 +54,19 @@ func (ed *editor) apply(edits []Edit, kind editKind, after func(move func(int, b
 	}
 	ed.sync()
 	if sels != nil {
+		// Placed in the text the edit made, and moved through the edits
+		// made after it before the editor followed.
+		if ed.view.version != made {
+			entries, _, _ := b.entriesSince(made)
+			for _, e := range entries {
+				if e.version > ed.view.version {
+					break
+				}
+				for i := range sels {
+					sels[i] = mapSel(sels[i], e.changes)
+				}
+			}
+		}
 		ed.sels = mergeSels(sels)
 	}
 	b.setSelectionsAfter(ed, slices.Clone(ed.sels))
@@ -183,26 +200,26 @@ func (ed *editor) autoPair(t string) bool {
 		return false
 	}
 	r := &ed.view.text
-	// Typing the closer just typed steps over it.
-	allOver := len(ed.autoclosed) > 0
-	for _, s := range ed.sels {
-		found := false
-		for _, a := range ed.autoclosed {
-			if s.empty() && a.at == s.head && a.close == t && r.Slice(s.head, s.head+len(t)) == t {
-				found = true
-			}
+	// Typing the closer just typed steps over it, at every caret.
+	closers := map[int]bool{}
+	for _, a := range ed.autoclosed {
+		if a.close == t {
+			closers[a.at] = true
 		}
-		if !found {
+	}
+	allOver := len(closers) > 0
+	for _, s := range ed.sels {
+		if !s.empty() || !closers[s.head] || r.Slice(s.head, s.head+len(t)) != t {
 			allOver = false
+			break
 		}
 	}
 	if allOver {
 		sels := slices.Clone(ed.sels)
 		for i := range sels {
-			at := sels[i].head
-			sels[i].collapse(at + len(t))
-			ed.autoclosed = slices.DeleteFunc(ed.autoclosed, func(a autoclose) bool { return a.at == at && a.close == t })
+			sels[i].collapse(sels[i].head + len(t))
 		}
+		ed.autoclosed = slices.DeleteFunc(ed.autoclosed, func(a autoclose) bool { return a.close == t && closers[a.at] })
 		ed.sels = sels
 		ed.reveal = max(ed.reveal, revealFit)
 		return true
@@ -364,8 +381,8 @@ func (ed *editor) copy(cut bool) {
 		}
 		text.WriteString(p)
 	}
-	ed.clip = clipboard{text: text.String(), pieces: pieces, lines: whole}
-	ed.services.WriteClipboard(ed.clip.text)
+	lastClip = clipboard{text: text.String(), pieces: pieces, lines: whole}
+	ed.services.WriteClipboard(lastClip.text)
 	if cut && !ed.o.readOnly {
 		ed.apply(edits, editOther, nil)
 	}
@@ -382,10 +399,15 @@ func (ed *editor) paste(text string) {
 	r := &ed.view.text
 	pieces := []string{text}
 	whole := []bool{false}
-	if ed.clip.text == text && len(ed.clip.pieces) == len(ed.sels) {
-		pieces, whole = ed.clip.pieces, ed.clip.lines
-	} else if ed.clip.text == text && len(ed.clip.pieces) == 1 {
-		whole = ed.clip.lines
+	clip := lastClip
+	switch {
+	case clip.text != text:
+	case len(clip.pieces) == len(ed.sels):
+		pieces, whole = clip.pieces, clip.lines
+	case !slices.Contains(clip.lines, false):
+		// Whole lines, from one caret or several: pasted as lines above
+		// each caret's, as Zed's.
+		whole = []bool{true}
 	}
 	var edits []Edit
 	for i, s := range ed.sels {
@@ -461,11 +483,12 @@ func (ed *editor) backspace() bool {
 		}
 		start := graphemeLeft(*r, s.head)
 		end := s.head
-		// A pair of brackets just opened goes together.
+		// A pair of brackets just opened, its closer closed by the editor,
+		// goes together, as Zed's.
 		if l := ed.language(); l != nil && ed.o.autoClose {
 			prev := r.Slice(start, s.head)
 			for _, p := range l.AutoClose {
-				if p.Open == prev && r.Slice(s.head, s.head+len(p.Close)) == p.Close {
+				if p.Open == prev && r.Slice(s.head, s.head+len(p.Close)) == p.Close && ed.autoclosedAt(s.head, p.Close) {
 					end = s.head + len(p.Close)
 					break
 				}
@@ -638,4 +661,10 @@ func outdentOnce(indent string, tab int) string {
 	}
 	n := len(indent) - len(strings.TrimRight(indent, " "))
 	return indent[:len(indent)-min(n, max(1, (n-1)%tab+1))]
+}
+
+// autoclosedAt reports whether the editor closed the bracket close at
+// off, as it was opened.
+func (ed *editor) autoclosedAt(off int, close string) bool {
+	return slices.ContainsFunc(ed.autoclosed, func(a autoclose) bool { return a.at == off && a.close == close })
 }
