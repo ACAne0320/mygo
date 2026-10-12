@@ -306,6 +306,18 @@ func TestCodeEditorClipboard(t *testing.T) {
 	ct.tt.SetClipboard("zz")
 	ct.key(ui.Cmd, ui.KeyV)
 	ct.want("azz| bzz| czz|")
+	// Pasting what was just copied over the selection still copied puts
+	// the caret after it, and pasting again pastes it again.
+	ct = newEditorTest(t, "", "say [hello] there")
+	ct.key(ui.Cmd, ui.KeyC)
+	ct.key(ui.Cmd, ui.KeyV)
+	ct.want("say hello| there")
+	ct.key(ui.Cmd, ui.KeyV)
+	ct.want("say hellohello| there")
+	// As does typing over a selection the character typed.
+	ct = newEditorTest(t, "", "a[b]c")
+	ct.typ("b")
+	ct.want("ab|c")
 }
 
 func TestCodeEditorComposition(t *testing.T) {

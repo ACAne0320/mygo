@@ -29,7 +29,19 @@ func (ed *editor) apply(edits []Edit, kind editKind, after func(move func(int, b
 	changes := b.edit(edits, kind, ed, before)
 	b.mu.Unlock()
 	if changes == nil {
-		return false
+		// The edits change nothing, as pasting the text selected over
+		// it: the selections still go where the edits put them, as the
+		// caret after the text pasted.
+		if after == nil {
+			return false
+		}
+		sels := after(func(off int, _ bias) int { return off })
+		if sels == nil {
+			return false
+		}
+		ed.setSels(mergeSels(sels), revealFit)
+		ed.blinkStart = time.Now()
+		return true
 	}
 	move := func(off int, bias bias) int { return mapOffset(off, changes, bias) }
 	var sels []sel
