@@ -804,7 +804,8 @@ func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 		behavior |= canJoinAllSpaces
 		// FullScreenNone (DisableFullScreen) also keeps a window out of
 		// other apps' full-screen Spaces. As an auxiliary, the window shows
-		// there too, and still cannot go full screen itself.
+		// there too (an accessory app's: macOS shows no regular app's
+		// windows there), and still cannot go full screen itself.
 		if behavior&collectionFullScreenNone != 0 {
 			behavior = behavior&^collectionFullScreenNone | collectionFullScreenAuxiliary
 			w.auxiliary = true

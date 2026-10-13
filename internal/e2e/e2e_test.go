@@ -1432,9 +1432,10 @@ func TestWindowExtras(t *testing.T) {
 	}
 }
 
-// A window that cannot go full screen still shows over other apps' full
-// screen when it is visible on all workspaces (#309), and still cannot go
-// full screen itself.
+// A window that cannot go full screen is an auxiliary of full-screen Spaces
+// while it is visible on all workspaces, which lets an accessory app show it
+// over other apps in full screen (#309), and it still cannot go full screen
+// itself.
 func TestVisibleOnAllWorkspacesWithoutFullScreen(t *testing.T) {
 	w := newWindow(t, mygo.WindowOptions{Title: "Overlay", Width: 300, Height: 120, AlwaysOnTop: true, DisableFullScreen: true})
 	const auxiliary, none = 1 << 8, 1 << 9 // NSWindowCollectionBehaviorFullScreen…

@@ -162,7 +162,9 @@ Other properties:
   for good again (Linux, Windows).
 - `SetVisibleOnAllWorkspaces` shows it on every Space or virtual desktop
   (macOS, Linux); on macOS also over other apps in full screen, as an
-  overlay does, even with `DisableFullScreen`.
+  overlay does, even with `DisableFullScreen`, if the app is an accessory
+  (`ActivationPolicyAccessory`, `App.Dock.Hide`): macOS shows no windows of
+  regular apps there.
 - `SetContentProtection(true)` keeps it out of screenshots and screen
   recordings.
 - `SetIgnoreMouseEvents(true)` lets clicks through to what is behind it.
