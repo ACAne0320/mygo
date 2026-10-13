@@ -167,6 +167,40 @@ func TestDelta(t *testing.T) {
 	}
 }
 
+// TestDeltaStapledTicket applies a delta between stapled bundles, as
+// archives hold, to the app a disk image holds, which has no ticket
+// (#300).
+func TestDeltaStapledTicket(t *testing.T) {
+	bundle := map[string]string{
+		"Contents/":                             "",
+		"Contents/MacOS/app":                    "app 1.0.0",
+		"Contents/_CodeSignature/CodeResources": "seal 1.0.0",
+	}
+	// Tickets of two versions share enough for a patch to be smaller.
+	ticket := strings.Repeat("ticket header ", 100)
+	stapled := maps.Clone(bundle)
+	stapled[stapledTicket] = ticket + "1.0.0"
+	newApp := map[string]string{
+		"Contents/":                             "",
+		"Contents/MacOS/app":                    "app 1.1.0",
+		"Contents/_CodeSignature/CodeResources": "seal 1.1.0",
+		stapledTicket:                           ticket + "1.1.0",
+	}
+	newDir := writeTree(t, newApp)
+	var delta bytes.Buffer
+	if err := WriteDelta(&delta, "1.0.0", "1.1.0", writeTree(t, stapled), newDir, nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, app := range map[string]map[string]string{"stapled": stapled, "from the disk image": bundle} {
+		out := filepath.Join(t.TempDir(), "app")
+		if err := ApplyDelta(bytes.NewReader(delta.Bytes()), int64(delta.Len()), "1.0.0", "1.1.0", writeTree(t, app), out); err != nil {
+			t.Errorf("applied to the app %s: %v", name, err)
+		} else if got, want := readTree(t, out), readTree(t, newDir); !maps.Equal(got, want) {
+			t.Errorf("applied to the app %s, made %v, want %v", name, got, want)
+		}
+	}
+}
+
 func FuzzApplyDelta(f *testing.F) {
 	old := map[string]string{"a": "old a", "b/": "", "b/c": "old c"}
 	var delta bytes.Buffer
