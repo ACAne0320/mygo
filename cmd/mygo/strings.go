@@ -204,6 +204,15 @@ func (p *stringsParser) word() (string, error) {
 				}
 				p.i += 4
 				r = rune(n)
+				// A character beyond the BMP is two escapes of its UTF-16 surrogates.
+				if utf16.IsSurrogate(r) && p.i+6 <= len(p.s) && p.s[p.i] == '\\' && (p.s[p.i+1] == 'U' || p.s[p.i+1] == 'u') {
+					if lo, err := strconv.ParseUint(string(p.s[p.i+2:p.i+6]), 16, 16); err == nil {
+						if c := utf16.DecodeRune(r, rune(lo)); c != unicode.ReplacementChar {
+							r = c
+							p.i += 6
+						}
+					}
+				}
 			case '0', '1', '2', '3', '4', '5', '6', '7':
 				n := int(e - '0')
 				for k := 0; k < 2 && p.i < len(p.s) && p.s[p.i] >= '0' && p.s[p.i] <= '7'; k++ {

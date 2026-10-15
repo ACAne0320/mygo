@@ -113,6 +113,10 @@ func writeLocalizations(c *Config, resources string, langs []appLanguage) error 
 `)
 		writePlistValue(&b, names, "")
 		b.WriteString("</plist>\n")
+		// The copy of the resources keeps links: write a new file, not through one.
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
 			return err
 		}

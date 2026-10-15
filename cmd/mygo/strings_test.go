@@ -16,13 +16,13 @@ func TestParseStrings(t *testing.T) {
 		return b
 	}
 	text := `/* The reasons of Info.plist, in German. */
-"NSMicrophoneUsageDescription" = "Mikrofon für \"Notizen\"\nund mehr \U00e4";
+"NSMicrophoneUsageDescription" = "Mikrofon für \"Notizen\"\nund mehr \U00e4 \UD83C\UDF99";
 // A line comment.
 NSCameraUsageDescription = "Kamera";
 "CFBundleName";
 `
 	want := map[string]string{
-		"NSMicrophoneUsageDescription": "Mikrofon für \"Notizen\"\nund mehr ä",
+		"NSMicrophoneUsageDescription": "Mikrofon für \"Notizen\"\nund mehr ä 🎙",
 		"NSCameraUsageDescription":     "Kamera",
 		"CFBundleName":                 "CFBundleName",
 	}
