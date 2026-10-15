@@ -188,8 +188,21 @@ func TestLanguagePackaging(t *testing.T) {
 	}
 	langs, _ := c.languages()
 	res := t.TempDir()
+	// The app's resources translate the reasons of Info.plist themselves, as Xcode's projects do.
+	os.MkdirAll(filepath.Join(res, "zh-Hans.lproj"), 0o755)
+	os.WriteFile(filepath.Join(res, "zh-Hans.lproj", "InfoPlist.strings"), []byte(`"NSMicrophoneUsageDescription" = "用麦克风录语音笔记。";`), 0o644)
+	os.MkdirAll(filepath.Join(res, "fr.lproj"), 0o755)
+	os.WriteFile(filepath.Join(res, "fr.lproj", "InfoPlist.strings"), []byte(`NSMicrophoneUsageDescription = "Enregistrer des notes vocales.";`), 0o644)
 	if err := writeLocalizations(c, res, langs); err != nil {
 		t.Fatal(err)
+	}
+	for lproj, want := range map[string]string{
+		"zh-Hans": "<key>NSMicrophoneUsageDescription</key>\n\t<string>用麦克风录语音笔记。</string>",
+		"fr":      "<key>NSMicrophoneUsageDescription</key>\n\t<string>Enregistrer des notes vocales.</string>",
+	} {
+		if data, _ := os.ReadFile(filepath.Join(res, lproj+".lproj", "InfoPlist.strings")); !strings.Contains(string(data), want) {
+			t.Errorf("the app's InfoPlist.strings of %s is not kept:\n%s", lproj, data)
+		}
 	}
 	for lproj, name := range map[string]string{"en": "", "zh-Hans": "笔记", "zh-HK": "筆記", "fr": "", "sr-Latn": ""} {
 		data, err := os.ReadFile(filepath.Join(res, lproj+".lproj", "InfoPlist.strings"))
