@@ -48,6 +48,9 @@ NSCameraUsageDescription = "Kamera";
 	if got, err := parseStrings([]byte(xmlText)); err != nil || got["NSCameraUsageDescription"] != "Kamera & mehr" {
 		t.Errorf("XML: %q, %v", got, err)
 	}
+	if got, err := parseStrings(utf16le(strings.Replace(xmlText, "UTF-8", "UTF-16", 1))); err != nil || got["NSCameraUsageDescription"] != "Kamera & mehr" {
+		t.Errorf("XML in UTF-16: %q, %v", got, err)
+	}
 
 	for data, want := range map[string]string{
 		`"a" = "b"`:        "line 1: want a ; after",

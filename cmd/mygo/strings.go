@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"unicode"
@@ -49,7 +50,10 @@ func parseStringsXML(b []byte) (map[string]string, error) {
 			} `xml:",any"`
 		} `xml:"dict"`
 	}
-	if err := xml.Unmarshal(b, &plist); err != nil {
+	d := xml.NewDecoder(bytes.NewReader(b))
+	// The text is UTF-8 by now, whatever encoding its declaration names (UTF-16 is decoded above).
+	d.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
+	if err := d.Decode(&plist); err != nil {
 		return nil, err
 	}
 	out := map[string]string{}
