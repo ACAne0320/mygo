@@ -788,6 +788,7 @@ func (r *Renderer) drawCanvas(c *scene.Image) error {
 		t = &canvasTexture{canvas: weak.Make(c)}
 		r.canvases[c.ID()] = t
 	}
+	t.lastFrame = r.frame // drawn or shown: the sweep keeps a transient canvas's texture
 	if t.tex != 0 && t.w == c.W && t.h == c.H && t.ver == c.Version() {
 		return nil
 	}
@@ -795,6 +796,7 @@ func (r *Renderer) drawCanvas(c *scene.Image) error {
 		if err := r.newTarget(&t.texture, c.W, c.H, true); err != nil {
 			return err
 		}
+		t.lastFrame = r.frame // newTarget clears the texture's state
 	}
 	cs := c.Scene
 	cs.Width, cs.Height = c.W, c.H

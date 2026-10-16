@@ -34,9 +34,9 @@ func TestCanvases(t *testing.T) {
 	}
 }
 
-// A transient canvas's texture goes once frames stop drawing it, though
-// the canvas is still about; another canvas's stays until it is
-// collected.
+// A transient canvas's texture stays while frames draw it, and goes once
+// they stop, though the canvas is still about; another canvas's stays
+// until it is collected.
 func TestTransientCanvas(t *testing.T) {
 	r, err := newRenderer()
 	if err != nil {
@@ -49,6 +49,10 @@ func TestTransientCanvas(t *testing.T) {
 	s.Canvases = []*scene.Image{layer, kept}
 	if _, err := r.renderOffscreen(s); err != nil {
 		t.Fatal(err)
+	}
+	r.sweep()
+	if r.canvases[layer.ID()] == nil || r.canvases[kept.ID()] == nil {
+		t.Fatal("a sweep after the frame that drew them freed a canvas's texture")
 	}
 	r.frame++ // a frame that draws neither
 	r.sweep()
