@@ -17,6 +17,9 @@ import (
 type Canvas struct {
 	img *scene.Image
 	bm  *Bitmap
+	// part is the bitmap of the canvas's top left corner that region
+	// returned last.
+	part *Bitmap
 }
 
 // NewCanvas returns a canvas of w×h pixels, transparent until drawn.
@@ -53,4 +56,26 @@ func (cv *Canvas) draw(p *Painter, scale float32, fn func(cp *Painter)) {
 	// this one first, as they finish first.
 	top := &p.rt.scene
 	top.Canvases = append(top.Canvases, cv.img)
+}
+
+// resize makes the canvas w×h pixels, transparent until drawn, keeping
+// its identity in renderers' texture caches: they replace its texture in
+// place, rather than keep the old one until the canvas is collected.
+func (cv *Canvas) resize(w, h int) {
+	cv.img.Resize(max(w, 1), max(h, 1))
+	cv.bm = &Bitmap{img: cv.img, w: cv.img.W, h: cv.img.H}
+	cv.part = nil
+}
+
+// region returns the canvas's top left w×h pixels as a bitmap of that
+// size, sharing the canvas's texture: what reads it, as an effect's
+// shader, finds it transparent beyond them.
+func (cv *Canvas) region(w, h int) *Bitmap {
+	if w == cv.img.W && h == cv.img.H {
+		return cv.bm
+	}
+	if p := cv.part; p == nil || p.w != w || p.h != h {
+		cv.part = &Bitmap{img: cv.img, w: w, h: h}
+	}
+	return cv.part
 }

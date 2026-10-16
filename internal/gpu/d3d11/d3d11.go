@@ -1171,25 +1171,30 @@ func (r *Renderer) present(sync uintptr) error {
 	if failed(hr) {
 		return fmt.Errorf("d3d11: present failed: %#x", uint32(hr))
 	}
-	// Forget the textures of images no frame drew for a while, and those
-	// of canvases gone.
 	if r.frame%120 == 0 {
-		for id, t := range r.images {
-			if r.frame-t.lastFrame > 240 {
-				free(&t.srv)
-				free(&t.tex)
-				delete(r.images, id)
-			}
-		}
-		for id, t := range r.canvases {
-			if t.canvas.Value() == nil {
-				freeCanvas(t)
-				delete(r.canvases, id)
-			}
-		}
+		r.sweep()
 	}
 	return nil
 }
 
 // FrameInfo describes the last frame for MYGO_FRAME_STATS.
 func (r *Renderer) FrameInfo() string { return r.b.Summary() }
+
+// sweep frees the textures of images no frame drew for a while, and
+// those of canvases gone, or transient and not drawn this frame: render
+// calls it every 120 frames.
+func (r *Renderer) sweep() {
+	for id, t := range r.images {
+		if r.frame-t.lastFrame > 240 {
+			free(&t.srv)
+			free(&t.tex)
+			delete(r.images, id)
+		}
+	}
+	for id, t := range r.canvases {
+		if c := t.canvas.Value(); c == nil || c.Transient && t.lastFrame != r.frame {
+			freeCanvas(t)
+			delete(r.canvases, id)
+		}
+	}
+}

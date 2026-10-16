@@ -1,11 +1,13 @@
 package shader
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"math"
 	"testing"
 
+	"github.com/egoist/mygo/internal/raster"
 	"github.com/egoist/mygo/internal/scene"
 	"github.com/egoist/mygo/internal/shader"
 	"github.com/egoist/mygo/internal/shaderir"
@@ -234,13 +236,28 @@ func DistortionEffect(pos vec2) vec2 {
 // effectScene returns a scene of s, an effect's shader, drawing content
 // of three rectangles in a canvas, the effect's box inset in it by 6
 // pixels, as Element.Effect draws an element.
-func effectScene(s *Shader) *scene.Scene {
-	content := scene.NewCanvas(112, 52)
-	content.Scene.Ops = []scene.Op{
+func effectScene(s *Shader) *scene.Scene { return effectSceneIn(s, 112, 52) }
+
+// effectScenes are effectScene's, and the same content in the corner of
+// a larger canvas, as Element.Effect keeps one as the element's size
+// changes: what the larger canvas holds beyond the content's 112×52
+// pixels, an opaque square, reads as transparent, and draws nothing.
+func effectScenes(s *Shader) map[string]*scene.Scene {
+	return map[string]*scene.Scene{"exact": effectSceneIn(s, 112, 52), "larger canvas": effectSceneIn(s, 176, 64)}
+}
+
+// effectSceneIn is effectScene with a canvas of w×h pixels, of which the
+// content is the top left 112×52.
+func effectSceneIn(s *Shader, w, h int) *scene.Scene {
+	content := scene.NewCanvas(w, h)
+	if w > 112 {
+		content.Scene.Ops = append(content.Scene.Ops, scene.Op{Kind: scene.OpFill, Rect: scene.Rect{X: 112, Y: 0, W: float32(w - 112), H: float32(h)}, Color: scene.Color{R: 255, A: 255}})
+	}
+	content.Scene.Ops = append(content.Scene.Ops, []scene.Op{
 		{Kind: scene.OpFill, Rect: scene.Rect{X: 6, Y: 6, W: 50, H: 20}, Color: scene.Color{R: 220, G: 40, B: 40, A: 255}},
 		{Kind: scene.OpFill, Rect: scene.Rect{X: 56, Y: 6, W: 50, H: 20}, Color: scene.Color{R: 37, G: 99, B: 235, A: 255}, Radii: [4]float32{8, 8, 8, 8}},
 		{Kind: scene.OpFill, Rect: scene.Rect{X: 6, Y: 26, W: 100, H: 20}, Color: scene.Color{R: 30, G: 160, B: 60, A: 200}},
-	}
+	}...)
 	words := make([]uint32, s.words)
 	words[2*shader.LayerImage], words[2*shader.LayerImage+1] = math.Float32bits(112), math.Float32bits(52)
 	words[scaleWord-2], words[scaleWord-1] = math.Float32bits(100), math.Float32bits(40)
@@ -307,4 +324,20 @@ func backdropCases() map[string]*scene.Scene {
 	s := MustCompile(backdropSource)
 	rotate := scene.Translation(115, 60).Mul(scene.Rotation(12)).Mul(scene.Translation(-115, -60))
 	return map[string]*scene.Scene{"sharp": backdropScene(s, 0, scene.Affine{}), "blurred": backdropScene(s, 6, scene.Affine{}), "rotated": backdropScene(s, 3, rotate)}
+}
+
+// TestEffectLargerCanvas checks that an effect drawn from the corner of a
+// larger canvas draws as from a canvas of the content's size: what the
+// canvas holds beyond the content does not show.
+func TestEffectLargerCanvas(t *testing.T) {
+	s := MustCompile(effectSource)
+	render := func(sc *scene.Scene) *raster.Image {
+		img := raster.NewImage(sc.Width, sc.Height)
+		raster.Render(img, sc)
+		return img
+	}
+	exact, larger := render(effectSceneIn(s, 112, 52)), render(effectSceneIn(s, 176, 64))
+	if !bytes.Equal(exact.Pix, larger.Pix) {
+		t.Error("an effect from a larger canvas draws otherwise")
+	}
 }

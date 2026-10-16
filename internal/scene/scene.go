@@ -432,6 +432,11 @@ type Image struct {
 	// PixVersion is the version Pix holds.
 	Scene      *Scene
 	PixVersion uint64
+	// Transient marks a canvas drawn anew in every frame that shows it,
+	// as an element's effect layer: renderers free its texture once
+	// frames stop drawing it, rather than once it is collected, which
+	// the little memory it takes of Go's heap may put off for minutes.
+	Transient bool
 }
 
 // NewCanvas returns a w×h image that renderers draw from a scene of its
@@ -470,9 +475,13 @@ func (m *Image) Changed() { m.version++ }
 // clip does not leave a new texture in the cache on every frame.
 func (m *Image) Resize(w, h int) {
 	m.W, m.H = w, h
-	if cap(m.Pix) >= 4*w*h {
+	switch {
+	case m.Scene != nil && m.Pix == nil:
+		// A canvas no renderer drew in memory: its pixels are made when
+		// one does.
+	case cap(m.Pix) >= 4*w*h:
 		m.Pix = m.Pix[:4*w*h]
-	} else {
+	default:
 		m.Pix = make([]byte, 4*w*h)
 	}
 	m.Changed()
