@@ -62,6 +62,35 @@ func TestEffectLayerKept(t *testing.T) {
 	}
 }
 
+// TestEffectLayerResized grows an element with an effect past its
+// bitmap, then shrinks it to well under: the bitmap is resized in place,
+// keeping its texture's identity, larger in steps, then smaller again.
+func TestEffectLayerResized(t *testing.T) {
+	fx := &layerSpy{ids: map[uint64]bool{}}
+	w := float32(200)
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Width(w).Height(30).Background(RGB(255, 0, 0)).Effect(fx)
+	}, 600, 100)
+	for _, step := range []struct {
+		w           float32
+		layer, part [2]int
+	}{
+		{200, [2]int{256, 64}, [2]int{206, 36}},
+		{400, [2]int{448, 64}, [2]int{406, 36}}, // past the bitmap: made larger
+		{330, [2]int{448, 64}, [2]int{336, 36}}, // less than two steps over: kept
+		{100, [2]int{128, 64}, [2]int{106, 36}}, // two steps over or more: made smaller
+	} {
+		w = step.w
+		tt.Frame()
+		if s, p := fx.sizes[len(fx.sizes)-1], fx.parts[len(fx.parts)-1]; s != step.layer || p != step.part {
+			t.Errorf("width %v: bitmap of %v, part %v, want %v and %v", step.w, s, p, step.layer, step.part)
+		}
+	}
+	if len(fx.ids) != 1 {
+		t.Errorf("%d bitmaps, want 1 resized", len(fx.ids))
+	}
+}
+
 // TestEffectLayerTransient: the bitmap of an element's effect is drawn
 // anew whenever it shows, so renderers may free its texture once frames
 // stop drawing it.
