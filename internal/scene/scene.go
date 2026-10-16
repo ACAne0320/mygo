@@ -360,6 +360,20 @@ type Scene struct {
 	// which renderers draw before it, whether it shows them or not, while
 	// the atlases their glyphs point at hold them.
 	Canvases []*Image
+	// Drawn, unless zero, is the part of a canvas's frame its content
+	// takes, from the top left corner, as an effect's layer made larger
+	// than its content: backdrops end at its edge (BackdropOf), as at the
+	// edge of a canvas of its size, and nothing is drawn beyond it.
+	Drawn image.Point
+}
+
+// BackdropOf is BackdropOf in s, a frame of w×h pixels, ending at the edge
+// of the part Drawn says.
+func (s *Scene) BackdropOf(r Rect, blur float32, w, h int) Backdrop {
+	if s.Drawn != (image.Point{}) {
+		w, h = min(w, s.Drawn.X), min(h, s.Drawn.Y)
+	}
+	return BackdropOf(r, blur, w, h)
 }
 
 // EachCanvas calls fn with the canvases the scene draws anew or shows,
@@ -401,6 +415,7 @@ func (s *Scene) eachShown(fn func(*Image)) {
 // Reset empties the scene for another frame, keeping its storage.
 func (s *Scene) Reset(width, height int, color Color) {
 	s.Width, s.Height, s.Clear = width, height, color
+	s.Drawn = image.Point{}
 	// Ops and effects can keep images and effect resources alive beyond
 	// the end of the shorter list the next frame paints.
 	clear(s.Ops)

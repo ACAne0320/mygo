@@ -101,7 +101,7 @@ func (p *Painter) paintEffect(e *node) bool {
 	}
 	dx, dy := -x0/s, -y0/s
 	world := e.world
-	cv.draw(p, s, func(cp *Painter) {
+	cv.drawPart(p, s, w, h, func(cp *Painter) {
 		e.effecting = true
 		// The subtree in e's own space, moved to the bitmap's corner:
 		// positions shift, and the transforms of those transformed lose

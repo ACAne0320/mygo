@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"image"
+
 	"github.com/egoist/mygo/internal/scene"
 )
 
@@ -44,13 +46,29 @@ func (cv *Canvas) Draw(p *Painter, fn func(cp *Painter)) { cv.draw(p, 1, fn) }
 
 // draw is Draw with scale pixels a DIP, the units fn paints in.
 func (cv *Canvas) draw(p *Painter, scale float32, fn func(cp *Painter)) {
+	cv.drawPart(p, scale, cv.img.W, cv.img.H, fn)
+}
+
+// drawPart is draw into the canvas's top left w×h pixels, as an effect's
+// layer larger than its content: fn paints nothing beyond them, and
+// backdrops end at their edge (scene.Scene.Drawn), as in a canvas of that
+// size.
+func (cv *Canvas) drawPart(p *Painter, scale float32, w, h int, fn func(cp *Painter)) {
 	s := cv.img.Scene
 	s.Reset(cv.img.W, cv.img.H, scene.Color{})
+	if w != cv.img.W || h != cv.img.H {
+		s.Drawn = image.Pt(w, h)
+	}
 	s.Scale = scale
 	parent := p.s
 	s.MaskAtlas, s.ColorAtlas, s.Text = parent.MaskAtlas, parent.ColorAtlas, parent.Text
-	cp := &Painter{rt: p.rt, s: s, scale: scale, opacity: 1, clip: Rect{W: float32(cv.img.W) / scale, H: float32(cv.img.H) / scale}}
-	fn(cp)
+	part := Rect{W: float32(w) / scale, H: float32(h) / scale}
+	cp := &Painter{rt: p.rt, s: s, scale: scale, opacity: 1, clip: part}
+	if s.Drawn != (image.Point{}) {
+		cp.Clip(part, 0, func() { fn(cp) })
+	} else {
+		fn(cp)
+	}
 	cv.img.Changed()
 	// The frame's renderer draws it, before the frame: canvases drawn in
 	// this one first, as they finish first.

@@ -2923,7 +2923,10 @@ either.
   edges cross pixels as it moves, or whose text grows, keeps one canvas
   and one texture, rather than one a size. The effect gets the content's
   part (`Canvas.region`), so shaders read beyond it as transparent, as
-  beyond a canvas of its size. The canvas is transient (`Image.Transient`). `ui/shader` gives an
+  beyond a canvas of its size; what the subtree paints is clipped to that
+  part, and backdrops end at its edge (`Scene.Drawn`, `Scene.BackdropOf`,
+  which the painter, the builders and the CPU renderer use alike), as at a
+  canvas's. The canvas is transient (`Image.Transient`). `ui/shader` gives an
   effect's entry point (`ColorEffect`, `DistortionEffect`, `LayerEffect`)
   a `Fragment` that calls it, and the bridge reads the content as image 3
   (`LayerImage`) from where the box's corner lies in it

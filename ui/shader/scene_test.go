@@ -285,13 +285,24 @@ func Fragment(dst vec4, pos vec2) vec4 {
 // blurred by blur pixels, its op under m, with the bridge's words as
 // Painter.EffectBackdrop sets them at scale 1.
 func backdropScene(s *Shader, blur float32, m scene.Affine) *scene.Scene {
-	sc := &scene.Scene{Width: 240, Height: 120, Clear: scene.Color{R: 250, G: 250, B: 250, A: 255}}
+	return backdropSceneIn(s, blur, m, scene.Rect{X: 40, Y: 30, W: 150, H: 60}, 240, 120)
+}
+
+// backdropSceneIn is backdropScene with the shader filling r, in a frame
+// of w×h pixels, of which the stripes take the top left 240×120: a
+// larger frame holds an opaque square beyond them, and says they are what
+// is drawn (Scene.Drawn), as an effect's layer larger than its content.
+func backdropSceneIn(s *Shader, blur float32, m scene.Affine, r scene.Rect, w, h int) *scene.Scene {
+	sc := &scene.Scene{Width: w, Height: h, Clear: scene.Color{R: 250, G: 250, B: 250, A: 255}}
+	if w > 240 || h > 120 {
+		sc.Drawn = image.Pt(240, 120)
+		sc.Ops = append(sc.Ops, scene.Op{Kind: scene.OpFill, Rect: scene.Rect{X: 240, W: float32(w - 240), H: float32(h)}, Color: scene.Color{R: 255, A: 255}})
+	}
 	for i := range 12 {
 		c := scene.Color{R: uint8(40 + 18*i), G: uint8(200 - 15*i), B: 90, A: 255}
 		sc.Ops = append(sc.Ops, scene.Op{Kind: scene.OpFill, Rect: scene.Rect{X: float32(i * 20), Y: 0, W: 10, H: 120}, Color: c})
 	}
-	r := scene.Rect{X: 40, Y: 30, W: 150, H: 60}
-	bk := scene.BackdropOf(m.Bounds(r), blur, sc.Width, sc.Height)
+	bk := sc.BackdropOf(m.Bounds(r), blur, sc.Width, sc.Height)
 	tw, th := bk.Size()
 	words := make([]uint32, s.words)
 	f := func(i int, v float32) { words[i] = math.Float32bits(v) }
@@ -339,5 +350,35 @@ func TestEffectLargerCanvas(t *testing.T) {
 	exact, larger := render(effectSceneIn(s, 112, 52)), render(effectSceneIn(s, 176, 64))
 	if !bytes.Equal(exact.Pix, larger.Pix) {
 		t.Error("an effect from a larger canvas draws otherwise")
+	}
+}
+
+// edgeBackdrops are a backdrop at the right edge of the stripes, sharp and
+// blurred, in a frame of their size and in a larger one that holds an
+// opaque square beyond them, which the backdrop reads as beyond the frame.
+func edgeBackdrops() map[string][2]*scene.Scene {
+	s := MustCompile(backdropSource)
+	r := scene.Rect{X: 150, Y: 30, W: 90, H: 60}
+	out := map[string][2]*scene.Scene{}
+	for name, blur := range map[string]float32{"sharp": 0, "blurred": 6} {
+		out[name] = [2]*scene.Scene{backdropSceneIn(s, blur, scene.Affine{}, r, 240, 120), backdropSceneIn(s, blur, scene.Affine{}, r, 304, 128)}
+	}
+	return out
+}
+
+// TestBackdropEndsAtDrawn checks that a backdrop in a frame larger than
+// what it draws (Scene.Drawn) ends at the edge of that, as in a frame of
+// its size: what lies beyond does not show through.
+func TestBackdropEndsAtDrawn(t *testing.T) {
+	for name, scs := range edgeBackdrops() {
+		exact, larger := raster.NewImage(240, 120), raster.NewImage(304, 128)
+		raster.Render(exact, scs[0])
+		raster.Render(larger, scs[1])
+		for y := range 120 {
+			if !bytes.Equal(exact.Pix[y*exact.Stride:][:4*240], larger.Pix[y*larger.Stride:][:4*240]) {
+				t.Errorf("%s: row %d differs in the larger frame", name, y)
+				break
+			}
+		}
 	}
 }

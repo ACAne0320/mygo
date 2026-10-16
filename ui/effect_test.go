@@ -114,3 +114,34 @@ func TestEffectDrawsItsPart(t *testing.T) {
 		}
 	}
 }
+
+// wholeLayer draws the whole of its content's layer, beyond the content's
+// part, as it lies.
+type wholeLayer struct{}
+
+func (wholeLayer) EffectMargin() Point { return Point{X: 3, Y: 3} }
+
+func (wholeLayer) PaintEffect(p *Painter, box Rect, content *Bitmap, inset Point) {
+	s := p.Scale()
+	all := &Bitmap{img: content.img, w: content.img.W, h: content.img.H}
+	p.ImageRegion(all, Rect{}, Rect{X: box.X - inset.X/s, Y: box.Y - inset.Y/s, W: float32(all.w) / s, H: float32(all.h) / s}, ImageOptions{})
+}
+
+// TestEffectLayerClipsOverflow: what an element paints beyond its box and
+// the effect's margin is not drawn into its layer, though the layer has
+// room for it, as a layer of the content's size has none.
+func TestEffectLayerClipsOverflow(t *testing.T) {
+	img := coreNewTester(func(c *context) {
+		coreBox(c).Fill().Background(RGB(255, 255, 255)).Padding(10).Children(func() {
+			coreBox(c).Width(70).Height(20).Effect(wholeLayer{}).Children(func() {
+				coreBox(c).Absolute().Left(60).Top(0).Width(60).Height(20).Background(RGB(255, 0, 0))
+			})
+		})
+	}, 300, 100).Image()
+	if p := img.RGBAAt(80, 20); p.R != 255 || p.G > 10 { // the margin, from 80 to 83
+		t.Errorf("in the margin %v, want red", p)
+	}
+	if p := img.RGBAAt(100, 20); p.G < 245 { // the layer's padding
+		t.Errorf("beyond the margin %v, want white", p)
+	}
+}
