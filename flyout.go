@@ -126,11 +126,6 @@ type FlyoutOptions struct {
 	// material and content are cut to them, and its Shadow follows them.
 	// Windows 11 rounds flyouts as it rounds its menus; Linux does not.
 	CornerRadius int
-	// ActiveAppearance keeps the flyout drawn as active while it is not,
-	// as WindowOptions.ActiveAppearance does a window: a flyout that does
-	// not take the keyboard never is, and its clear Liquid Glass
-	// (VibrancyGlassClear) would be frosted.
-	ActiveAppearance bool
 
 	// URL is loaded right after the flyout is created, as
 	// WindowOptions.URL.
@@ -174,7 +169,6 @@ func NewFlyout(opts FlyoutOptions) *Window {
 		Content:           opts.Content,
 		Hidden:            opts.Hidden,
 		Vibrancy:          opts.Vibrancy,
-		ActiveAppearance:  opts.ActiveAppearance,
 	}, nil, &flyoutOptions{fo, opts.Tray})
 }
 

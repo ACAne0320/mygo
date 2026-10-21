@@ -80,16 +80,16 @@ a heads-up display or a floating toolbar:
 
 ```go
 hud := mygo.NewWindow(mygo.WindowOptions{
-	Frameless:        true,
-	Transparent:      true,
-	AlwaysOnTop:      true,
-	Vibrancy:         mygo.VibrancyGlassClear, // Acrylic on Windows 11
-	CornerRadius:     18,
-	ActiveAppearance: true, // stays clear over the app in front (macOS)
-	Width:            360,
-	Height:           64,
-	Content:          ui.View(view), // its root transparent where c.Vibrancy()
+	Frameless:    true,
+	Transparent:  true,
+	AlwaysOnTop:  true,
+	Vibrancy:     mygo.VibrancyGlassClear, // Acrylic on Windows 11
+	CornerRadius: 18,
+	Width:        360,
+	Height:       64,
+	Content:      ui.View(view), // its root transparent where c.Vibrancy()
 })
+hud.SetActiveAppearance(true) // stays clear over the app in front (macOS)
 ```
 
 The [glass plugin](../plugins/glass.md) draws Liquid Glass too, on every
@@ -101,8 +101,8 @@ or HUD material, on Windows 11 Acrylic, and on Linux none, which
 
 The clear glass looks clear only in a window drawn as active, the key
 window of the app in front; otherwise the system frosts it, as it does a
-panel floating over the app the user is in. `ActiveAppearance` keeps the
-window drawn as active, with a private AppKit call that a later macOS may
+panel floating over the app the user is in. `SetActiveAppearance` keeps
+the window drawn as active, with a private AppKit call that a later macOS may
 drop, the window then drawn as any other: apps for the Mac App Store
 should leave it off.
 

@@ -324,6 +324,22 @@ func TestMaterial(handle uintptr) (class string, style int, radius float64, acti
 	return class, style, radius, active
 }
 
+// TestRoundedBacking reports whether a window is opaque, and the alpha of
+// its content view's background, which fills its rounded corners' inside.
+func TestRoundedBacking(handle uintptr) (opaque bool, alpha float64) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil {
+		return false, 0
+	}
+	opaque = sendBool(w.win, "isOpaque")
+	if layer := send(w.view, "layer"); layer != 0 {
+		if c := send(layer, "backgroundColor"); c != 0 {
+			alpha = msgFloat(send(class("NSColor"), "colorWithCGColor:", uintptr(c)), sel("alphaComponent"))
+		}
+	}
+	return opaque, alpha
+}
+
 // TestDockInspector opens the web inspector of a window docked to it, and
 // reports whether the window has one.
 func TestDockInspector(handle uintptr) bool {

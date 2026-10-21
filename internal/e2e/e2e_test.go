@@ -708,14 +708,15 @@ func TestVibrancy(t *testing.T) {
 }
 
 // TestGlass gives a frameless window of native UI Liquid Glass, clear, cut
-// to its corners (macOS 26; the HUD material before), which stays drawn as
-// active once another app is in front, as a floating panel's must for the
-// clear glass to stay clear. SetVibrancy swaps the glass for another
+// to its corners (macOS 26; the HUD material before), which SetActiveAppearance
+// keeps drawn as active once another app is in front, as a floating panel's
+// must be for the clear glass to stay clear. SetVibrancy swaps the glass for another
 // material, which keeps the corners, and back.
 func TestGlass(t *testing.T) {
 	view := ui.View(func(c *ui.Context) { c.Root().Background(ui.Transparent) })
 	w := newWindow(t, mygo.WindowOptions{Width: 300, Height: 200, Frameless: true, Transparent: true,
-		Vibrancy: mygo.VibrancyGlassClear, CornerRadius: 16, ActiveAppearance: true, Content: view})
+		Vibrancy: mygo.VibrancyGlassClear, CornerRadius: 16, Content: view})
+	w.SetActiveAppearance(true)
 	class, style, radius, _, ok := material(w)
 	if !ok {
 		t.Skip("the material is macOS's")
@@ -724,7 +725,7 @@ func TestGlass(t *testing.T) {
 	if !glass && class != "NSVisualEffectView" || glass && style != 1 || radius != 16 {
 		t.Errorf("material %s, style %d, corners %v; want the clear glass, or the HUD material before macOS 26, cut to 16", class, style, radius)
 	}
-	// Without ActiveAppearance, a window draws as inactive once the app is.
+	// Without SetActiveAppearance, a window draws as inactive once the app is.
 	other := newWindow(t, mygo.WindowOptions{Width: 200, Height: 100, Frameless: true, Transparent: true, Vibrancy: mygo.VibrancyGlassClear, Content: view})
 	if deactivateApp() {
 		eventually(t, "the app deactivated", func() bool { active, _ := appActive(); return !active })
@@ -732,7 +733,7 @@ func TestGlass(t *testing.T) {
 			t.Error("with another app in front, the window no longer draws as active")
 		}
 		if _, _, _, active, _ := material(other); active {
-			t.Error("a window without ActiveAppearance draws as active with another app in front")
+			t.Error("a window without SetActiveAppearance draws as active with another app in front")
 		}
 	}
 	w.SetVibrancy(mygo.VibrancyPopover)
@@ -746,6 +747,26 @@ func TestGlass(t *testing.T) {
 	w.SetVibrancy(mygo.VibrancyNone)
 	if class, _, _, _, _ := material(w); class != "" {
 		t.Errorf("no material: %s", class)
+	}
+}
+
+// TestRoundedOpaqueWindow rounds a frameless window that is not
+// transparent: the window is made clear and its color goes to the content
+// view, cut to the corners, so that nothing fills them, the color set later
+// too (macOS).
+func TestRoundedOpaqueWindow(t *testing.T) {
+	w := newWindow(t, mygo.WindowOptions{Width: 300, Height: 200, Frameless: true, CornerRadius: 12, BackgroundColor: "#ff0000",
+		Content: ui.View(func(c *ui.Context) { c.Root().Background(ui.Transparent) })})
+	opaque, alpha, ok := roundedBacking(w)
+	if !ok {
+		t.Skip("the corners are cut on macOS")
+	}
+	if _, _, radius, _, _ := material(w); opaque || alpha != 1 || radius != 12 {
+		t.Errorf("opaque %v, the content view's color's alpha %v, corners %v; want a clear window, its color on the content view, cut to 12", opaque, alpha, radius)
+	}
+	w.SetBackgroundColor("#00ff0080")
+	if opaque, alpha, _ := roundedBacking(w); opaque || alpha < .49 || alpha > .51 {
+		t.Errorf("after SetBackgroundColor: opaque %v, alpha %v; want a clear window, the new color on the content view", opaque, alpha)
 	}
 }
 

@@ -259,8 +259,9 @@ func (w *window) createFlyout() {
 
 // roundContent cuts the content view, and the material in it, to corners
 // of radius, a flyout's (Flyout.Radius) or a frameless window's
-// (WindowOptions.CornerRadius): the window is clear, so its shadow, made
-// from what it draws, follows them.
+// (WindowOptions.CornerRadius). The window is made clear, its color moved
+// to the content view, which is cut to them, so that nothing fills the
+// corners, and its shadow, made from what it draws, follows them.
 func (w *window) roundContent(radius int) {
 	if radius <= 0 {
 		return
@@ -271,6 +272,11 @@ func (w *window) roundContent(radius int) {
 	msgSetFloat(layer, sel("setCornerRadius:"), float64(radius))
 	send(layer, "setCornerCurve:", uintptr(nsString("continuous")))
 	send(layer, "setMasksToBounds:", 1)
+	if sendBool(w.win, "isOpaque") {
+		send(layer, "setBackgroundColor:", uintptr(send(send(w.win, "backgroundColor"), "CGColor")))
+		send(w.win, "setOpaque:", 0)
+		send(w.win, "setBackgroundColor:", uintptr(send(class("NSColor"), "clearColor")))
+	}
 	w.roundEffect()
 	send(w.win, "invalidateShadow")
 }
@@ -313,15 +319,6 @@ func (w *window) fillWindow(content NSRect) {
 	send(w.win, "setContentView:", uintptr(w.view))
 	if o.Vibrancy != "" {
 		w.SetVibrancy(o.Vibrancy)
-	}
-	if o.ActiveAppearance && respondsTo(w.win, "_setForceMainAppearance:") {
-		// AppKit's own, private: it has the window draw as the main window
-		// of the app in front, whichever is. Without it, a window that is
-		// not draws its glass frosted, the clear style too, as a panel
-		// floating over another app always is. NSVisualEffectView has a
-		// public setting for it (its state, which SetVibrancy sets);
-		// NSGlassEffectView has none.
-		send(w.win, "_setForceMainAppearance:", 1)
 	}
 }
 
@@ -877,10 +874,14 @@ func (w *window) Center()            { send(w.win, "center") }
 
 func (w *window) SetBackgroundColor(c platform.Color) {
 	withPool(func() {
-		if w.host != nil {
+		switch {
+		case w.host != nil:
 			// A web view's window is its host's.
 			w.clipBackground(c)
-		} else {
+		case w.radius > 0:
+			// The window stays clear, its corners cut off (roundContent).
+			send(send(w.view, "layer"), "setBackgroundColor:", uintptr(send(nsColor(c), "CGColor")))
+		default:
 			send(w.win, "setBackgroundColor:", uintptr(nsColor(c)))
 		}
 		send(w.web, "setValue:forKey:", uintptr(nsBool(false)), uintptr(nsString("drawsBackground")))
@@ -1003,6 +1004,18 @@ func (w *window) SetVibrancy(material string) {
 			send(w.effect, "setMaterial:", m)
 		}
 	})
+}
+
+// SetActiveAppearance has the window drawn as the main window of the app
+// in front, whichever is, through AppKit's own, private
+// _setForceMainAppearance:. Without it, a window that is not draws its glass
+// frosted, the clear style too, as a panel floating over another app always
+// is. NSVisualEffectView has a public setting for it (its state, which
+// SetVibrancy sets); NSGlassEffectView has none.
+func (w *window) SetActiveAppearance(v bool) {
+	if respondsTo(w.win, "_setForceMainAppearance:") {
+		send(w.win, "_setForceMainAppearance:", boolArg(v))
+	}
 }
 
 // removeEffect takes the material out of the window.

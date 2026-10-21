@@ -173,16 +173,23 @@ func TestWindowDefaults(t *testing.T) {
 }
 
 // TestGlassWindowOptions passes a floating panel's look to the backend: the
-// glass, the corners of a frameless window, and its active look; a negative
-// radius is none.
+// glass and the corners of a frameless window, a negative radius none; and
+// its active look, which SetActiveAppearance sets.
 func TestGlassWindowOptions(t *testing.T) {
-	_, fw := testWindow(t, WindowOptions{Frameless: true, Transparent: true, Vibrancy: VibrancyGlassClear, CornerRadius: 16, ActiveAppearance: true})
-	if o := fw.Opts; o.Vibrancy != "glass-clear" || o.CornerRadius != 16 || !o.ActiveAppearance {
-		t.Errorf("vibrancy %q, radius %d, active %v", o.Vibrancy, o.CornerRadius, o.ActiveAppearance)
+	w, fw := testWindow(t, WindowOptions{Frameless: true, Transparent: true, Vibrancy: VibrancyGlassClear, CornerRadius: 16})
+	if o := fw.Opts; o.Vibrancy != "glass-clear" || o.CornerRadius != 16 {
+		t.Errorf("vibrancy %q, radius %d", o.Vibrancy, o.CornerRadius)
+	}
+	if fw.ActiveAppearance() {
+		t.Error("drawn as active before SetActiveAppearance")
+	}
+	w.SetActiveAppearance(true)
+	if !fw.ActiveAppearance() {
+		t.Error("SetActiveAppearance(true) did not reach the backend")
 	}
 	_, fw = testWindow(t, WindowOptions{Frameless: true, CornerRadius: -4})
-	if o := fw.Opts; o.CornerRadius != 0 || o.ActiveAppearance {
-		t.Errorf("radius %d, active %v; want none", o.CornerRadius, o.ActiveAppearance)
+	if o := fw.Opts; o.CornerRadius != 0 {
+		t.Errorf("radius %d; want none", o.CornerRadius)
 	}
 }
 

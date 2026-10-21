@@ -1046,6 +1046,10 @@ func backdropFor(material string) int32 {
 	return backdropMica
 }
 
+// SetActiveAppearance does nothing: Windows has no way to draw a window
+// that is not active as one that is.
+func (w *window) SetActiveAppearance(bool) {}
+
 func (w *window) SetVibrancy(material string) {
 	w.vibrancy = material
 	backdrop := backdropFor(material)

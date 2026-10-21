@@ -49,7 +49,7 @@ const (
 //
 // The clear glass looks clear only in a window drawn as active, the key
 // window of the app in front, and frosted otherwise, as a floating panel
-// over another app is: WindowOptions.ActiveAppearance keeps it clear.
+// over another app is: Window.SetActiveAppearance keeps it clear.
 const (
 	// VibrancyGlass is the regular glass, frosted so that what is on it
 	// reads over anything: bars, panels, launchers.
