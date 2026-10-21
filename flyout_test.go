@@ -55,6 +55,15 @@ func TestFlyoutOptions(t *testing.T) {
 	}
 }
 
+// TestFlyoutGlass passes a flyout's glass and active look to its window.
+func TestFlyoutGlass(t *testing.T) {
+	parent, _ := testWindow(t, WindowOptions{})
+	_, fw := testFlyout(t, FlyoutOptions{Parent: parent, Vibrancy: VibrancyGlassClear, CornerRadius: 12, ActiveAppearance: true, Content: ui.View(func(c *ui.Context) {})})
+	if o := fw.Opts; o.Vibrancy != "glass-clear" || !o.ActiveAppearance || o.Flyout == nil || o.Flyout.Radius != 12 {
+		t.Errorf("vibrancy %q, active %v, flyout %+v", o.Vibrancy, o.ActiveAppearance, o.Flyout)
+	}
+}
+
 func TestFlyoutPlacement(t *testing.T) {
 	parent, pw := testWindow(t, WindowOptions{X: 100, Y: 100, Width: 400, Height: 300})
 	anchor := Rectangle{X: 10, Y: 20, Width: 80, Height: 24}

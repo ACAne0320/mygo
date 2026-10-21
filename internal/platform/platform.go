@@ -339,9 +339,16 @@ type WindowOptions struct {
 	HideWindowButtons    bool
 	TrafficLightPosition *Point
 	Vibrancy             string
-	Opacity              float64
-	Parent               Window
-	Modal                bool
+	// CornerRadius rounds a frameless window's corners, in DIPs: its
+	// content and material are cut to them (macOS), or the system rounds
+	// it with its own corners (Windows 11).
+	CornerRadius int
+	// ActiveAppearance keeps the window looking active, as the key window
+	// of the app in front, while it is not (macOS).
+	ActiveAppearance bool
+	Opacity          float64
+	Parent           Window
+	Modal            bool
 	// Flyout makes the window a flyout of its Parent, placed next to an
 	// anchor (Window.PlaceFlyout), at Width and Height: borderless,
 	// transparent, out of the taskbar, with Focusable telling whether it

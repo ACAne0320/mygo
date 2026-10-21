@@ -144,6 +144,20 @@ type WindowOptions struct {
 	// material can show one, and it has no menu bar: Alt and F10 open its
 	// menus in a popup.
 	Vibrancy Vibrancy
+	// CornerRadius rounds a frameless window's corners on macOS, in DIPs:
+	// its content and material are cut to them, and its shadow follows
+	// them, as a launcher's or a floating panel's. Windows 11 rounds a
+	// frameless window given one with the corners of its own windows,
+	// whatever the radius; Linux does not round it.
+	CornerRadius int
+	// ActiveAppearance keeps the window drawn as active, the key window of
+	// the app in front, while it is not (macOS): its controls and material
+	// keep their active look, as the clear Liquid Glass stays clear
+	// (VibrancyGlassClear) in a panel floating over another app. It uses
+	// AppKit's private _setForceMainAppearance:, which a later macOS may
+	// drop: the window then looks as any other. Apps for the Mac App Store
+	// should not set it.
+	ActiveAppearance bool
 	// Opacity of the window between 0 and 1 (default 1).
 	Opacity float64
 	// Parent makes this window a child window that stays on top of it.
@@ -518,6 +532,8 @@ func (w *Window) platformOptions(o *WindowOptions) *platform.WindowOptions {
 		TitleBarHeight:    max(o.TitleBarHeight, 0),
 		HideWindowButtons: o.HideWindowButtons,
 		Vibrancy:          string(o.Vibrancy),
+		CornerRadius:      max(o.CornerRadius, 0),
+		ActiveAppearance:  o.ActiveAppearance,
 		Opacity:           o.Opacity,
 		Modal:             o.Modal,
 		UserAgent:         po.UserAgent,

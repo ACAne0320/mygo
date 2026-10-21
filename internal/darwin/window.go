@@ -58,8 +58,14 @@ type window struct {
 	web      id
 	delegate id
 	ucc      id
-	effect   id
-	parent   *window
+	// effect is the material behind the content (Vibrancy): an
+	// NSVisualEffectView, or an NSGlassEffectView when glass is.
+	effect id
+	glass  bool
+	// radius is the corners the content view is cut to (Flyout.Radius,
+	// WindowOptions.CornerRadius), which the material follows.
+	radius int
+	parent *window
 	// flyout is how a flyout (WindowOptions.Flyout) was placed last, at
 	// flyoutSize.
 	flyout     platform.Flyout
@@ -191,6 +197,9 @@ func (w *window) create() {
 		send(w.win, "setLevel:", nsFloatingWindowLevel)
 	}
 	w.fillWindow(content)
+	if o.Frameless {
+		w.roundContent(o.CornerRadius)
+	}
 
 	if o.Center {
 		send(w.win, "center")
@@ -243,31 +252,44 @@ func (w *window) createFlyout() {
 		send(w.win, "setLevel:", nsPopUpMenuWindowLevel)
 	}
 	w.fillWindow(content)
-	w.roundFlyout()
+	w.roundContent(w.flyout.Radius)
 	w.register()
 	w.PlaceFlyout(w.flyout, w.flyoutSize)
 }
 
-// roundFlyout cuts a flyout's content view, and the material in it, to
-// the corners of Flyout.Radius: the window is clear, so its shadow, made
+// roundContent cuts the content view, and the material in it, to corners
+// of radius, a flyout's (Flyout.Radius) or a frameless window's
+// (WindowOptions.CornerRadius): the window is clear, so its shadow, made
 // from what it draws, follows them.
-func (w *window) roundFlyout() {
-	if w.flyout.Radius <= 0 {
+func (w *window) roundContent(radius int) {
+	if radius <= 0 {
 		return
 	}
+	w.radius = radius
 	send(w.view, "setWantsLayer:", 1)
 	layer := send(w.view, "layer")
-	msgSetFloat(layer, sel("setCornerRadius:"), float64(w.flyout.Radius))
+	msgSetFloat(layer, sel("setCornerRadius:"), float64(radius))
 	send(layer, "setCornerCurve:", uintptr(nsString("continuous")))
 	send(layer, "setMasksToBounds:", 1)
-	if w.effect != 0 {
-		send(w.effect, "setWantsLayer:", 1)
-		el := send(w.effect, "layer")
-		msgSetFloat(el, sel("setCornerRadius:"), float64(w.flyout.Radius))
-		send(el, "setCornerCurve:", uintptr(nsString("continuous")))
-		send(el, "setMasksToBounds:", 1)
-	}
+	w.roundEffect()
 	send(w.win, "invalidateShadow")
+}
+
+// roundEffect cuts the material to the content view's corners. The glass
+// draws its rim along its own corners, which it rounds itself.
+func (w *window) roundEffect() {
+	if w.effect == 0 || w.radius <= 0 {
+		return
+	}
+	if w.glass {
+		msgSetFloat(w.effect, sel("setCornerRadius:"), float64(w.radius))
+		return
+	}
+	send(w.effect, "setWantsLayer:", 1)
+	el := send(w.effect, "layer")
+	msgSetFloat(el, sel("setCornerRadius:"), float64(w.radius))
+	send(el, "setCornerCurve:", uintptr(nsString("continuous")))
+	send(el, "setMasksToBounds:", 1)
 }
 
 // fillWindow gives a new window its look and its web view or surface.
@@ -291,6 +313,15 @@ func (w *window) fillWindow(content NSRect) {
 	send(w.win, "setContentView:", uintptr(w.view))
 	if o.Vibrancy != "" {
 		w.SetVibrancy(o.Vibrancy)
+	}
+	if o.ActiveAppearance && respondsTo(w.win, "_setForceMainAppearance:") {
+		// AppKit's own, private: it has the window draw as the main window
+		// of the app in front, whichever is. Without it, a window that is
+		// not draws its glass frosted, the clear style too, as a panel
+		// floating over another app always is. NSVisualEffectView has a
+		// public setting for it (its state, which SetVibrancy sets);
+		// NSGlassEffectView has none.
+		send(w.win, "_setForceMainAppearance:", 1)
 	}
 }
 
@@ -914,6 +945,14 @@ func (w *window) SetContentProtection(v bool) {
 	send(w.win, "setSharingType:", sharing)
 }
 
+// glassStyles maps the Liquid Glass vibrancies to NSGlassEffectViewStyle,
+// and to the NSVisualEffectMaterial closest to each before macOS 26, which
+// has no NSGlassEffectView.
+var glassStyles = map[string]struct{ style, material uintptr }{
+	"glass":       {0, 6},  // regular; popover
+	"glass-clear": {1, 13}, // clear; HUD
+}
+
 // vibrancyMaterials maps mygo.Vibrancy values to NSVisualEffectMaterial.
 var vibrancyMaterials = map[string]uintptr{
 	"titlebar": 3, "selection": 4, "menu": 5, "popover": 6, "sidebar": 7, "header": 10,
@@ -926,28 +965,53 @@ var vibrancyMaterials = map[string]uintptr{
 func (w *window) SetVibrancy(material string) {
 	withPool(func() {
 		m, ok := vibrancyMaterials[material]
-		if !ok {
+		g, isGlass := glassStyles[material]
+		glass := isGlass && hasClass("NSGlassEffectView")
+		if isGlass && !glass {
+			m, ok = g.material, true
+		}
+		if !ok && !glass {
 			if material != "" {
 				log.Printf("mygo: unknown vibrancy %q", material)
 			}
-			if w.effect != 0 {
-				send(w.effect, "removeFromSuperview")
-				release(w.effect)
-				w.effect = 0
-			}
+			w.removeEffect()
 			return
 		}
+		if w.effect != 0 && w.glass != glass {
+			w.removeEffect()
+		}
 		if w.effect == 0 {
-			w.effect = msgInitRect(send(class("NSVisualEffectView"), "alloc"), sel("initWithFrame:"), msgRect(w.view, sel("bounds")))
-			send(w.effect, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
-			send(w.effect, "setState:", 1)        // NSVisualEffectStateActive
+			cls := "NSVisualEffectView"
+			if glass {
+				cls = "NSGlassEffectView"
+			}
+			w.effect = msgInitRect(send(class(cls), "alloc"), sel("initWithFrame:"), msgRect(w.view, sel("bounds")))
+			w.glass = glass
+			if !glass {
+				send(w.effect, "setBlendingMode:", 0) // NSVisualEffectBlendingModeBehindWindow
+				send(w.effect, "setState:", 1)        // NSVisualEffectStateActive
+			}
 			send(w.effect, "setAutoresizingMask:", nsViewWidthHeightSizable)
 			// Behind the page and a docked inspector.
 			send(w.view, "addSubview:positioned:relativeTo:", uintptr(w.effect), ^uintptr(0), 0) // NSWindowBelow
 			send(w.web, "setValue:forKey:", uintptr(nsBool(false)), uintptr(nsString("drawsBackground")))
+			w.roundEffect()
 		}
-		send(w.effect, "setMaterial:", m)
+		if glass {
+			send(w.effect, "setStyle:", g.style)
+		} else {
+			send(w.effect, "setMaterial:", m)
+		}
 	})
+}
+
+// removeEffect takes the material out of the window.
+func (w *window) removeEffect() {
+	if w.effect != 0 {
+		send(w.effect, "removeFromSuperview")
+		release(w.effect)
+		w.effect, w.glass = 0, false
+	}
 }
 
 func (w *window) SetMenu(*platform.Menu) {}

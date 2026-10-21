@@ -707,6 +707,48 @@ func TestVibrancy(t *testing.T) {
 	}
 }
 
+// TestGlass gives a frameless window of native UI Liquid Glass, clear, cut
+// to its corners (macOS 26; the HUD material before), which stays drawn as
+// active once another app is in front, as a floating panel's must for the
+// clear glass to stay clear. SetVibrancy swaps the glass for another
+// material, which keeps the corners, and back.
+func TestGlass(t *testing.T) {
+	view := ui.View(func(c *ui.Context) { c.Root().Background(ui.Transparent) })
+	w := newWindow(t, mygo.WindowOptions{Width: 300, Height: 200, Frameless: true, Transparent: true,
+		Vibrancy: mygo.VibrancyGlassClear, CornerRadius: 16, ActiveAppearance: true, Content: view})
+	class, style, radius, _, ok := material(w)
+	if !ok {
+		t.Skip("the material is macOS's")
+	}
+	glass := class == "NSGlassEffectView"
+	if !glass && class != "NSVisualEffectView" || glass && style != 1 || radius != 16 {
+		t.Errorf("material %s, style %d, corners %v; want the clear glass, or the HUD material before macOS 26, cut to 16", class, style, radius)
+	}
+	// Without ActiveAppearance, a window draws as inactive once the app is.
+	other := newWindow(t, mygo.WindowOptions{Width: 200, Height: 100, Frameless: true, Transparent: true, Vibrancy: mygo.VibrancyGlassClear, Content: view})
+	if deactivateApp() {
+		eventually(t, "the app deactivated", func() bool { active, _ := appActive(); return !active })
+		if _, _, _, active, _ := material(w); !active {
+			t.Error("with another app in front, the window no longer draws as active")
+		}
+		if _, _, _, active, _ := material(other); active {
+			t.Error("a window without ActiveAppearance draws as active with another app in front")
+		}
+	}
+	w.SetVibrancy(mygo.VibrancyPopover)
+	if class, _, radius, _, _ := material(w); class != "NSVisualEffectView" || radius != 16 {
+		t.Errorf("popover: material %s, corners %v", class, radius)
+	}
+	w.SetVibrancy(mygo.VibrancyGlass)
+	if class, style, _, _, _ := material(w); glass && (class != "NSGlassEffectView" || style != 0) {
+		t.Errorf("regular glass: material %s, style %d", class, style)
+	}
+	w.SetVibrancy(mygo.VibrancyNone)
+	if class, _, _, _, _ := material(w); class != "" {
+		t.Errorf("no material: %s", class)
+	}
+}
+
 // On Windows, a window with a material behind its page has no redirection
 // bitmap, which hides what GDI draws: the controls of a hidden title bar
 // show through DirectComposition, in every window again once its device

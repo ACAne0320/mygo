@@ -155,8 +155,10 @@ func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler)
 		return nil, errors.New("mygo: cannot create a window")
 	}
 	b.windows[w.hwnd] = w
-	if o.Panel {
-		// Windows 11 gives tool windows the small corners of menus.
+	if o.Panel || o.Frameless && o.CornerRadius > 0 {
+		// Windows 11 gives tool windows the small corners of menus, and
+		// frameless windows none: rounded, they take its own corners,
+		// whatever the radius.
 		w.roundFlyout()
 	}
 	if o.Flyout != nil {
@@ -1038,7 +1040,7 @@ func backdropFor(material string) int32 {
 		return backdropMica
 	case "tabbed":
 		return backdropMicaAlt
-	case "acrylic", "menu", "popover", "hud", "sheet", "tooltip", "selection", "fullscreen-ui":
+	case "acrylic", "menu", "popover", "hud", "sheet", "tooltip", "selection", "fullscreen-ui", "glass", "glass-clear":
 		return backdropAcrylic
 	}
 	return backdropMica
