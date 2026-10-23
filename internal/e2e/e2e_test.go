@@ -3213,13 +3213,21 @@ func TestContentWindowTransparent(t *testing.T) {
 	if !noRedirect {
 		t.Fatal("a transparent window of native UI has a redirection bitmap")
 	}
-	if _, _, _, ok := screenColor(w, 300, 150); !ok {
-		t.Skip("the screen cannot be read")
-	}
 	color := func(x float64, want func(r, g, b uint8) bool) func() bool {
-		return func() bool { r, g, b, _ := screenColor(w, x, 150); return want(r, g, b) }
+		return func() bool { r, g, b, ok := screenColor(w, x, 150); return ok && want(r, g, b) }
 	}
-	eventually(t, "the window's pane on the screen", color(300, func(r, g, b uint8) bool { return r > 200 && g < 60 && b < 60 }))
+	red := color(300, func(r, g, b uint8) bool { return r > 200 && g < 60 && b < 60 })
+	// Some displays, as the Windows ARM64 runners', never show GDI what
+	// DirectComposition composes: there the pane never reads, as in
+	// TestContentWindowVibrancy, and nothing tells it apart from a pane not
+	// shown yet.
+	readable := false
+	for deadline := time.Now().Add(3 * time.Second); !readable && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		readable = red()
+	}
+	if !readable {
+		t.Skip("the screen does not show the window's pane: not reading what is behind it")
+	}
 	eventually(t, "the window behind, beside the pane", color(100, func(r, g, b uint8) bool { return b > 200 && r < 60 && g < 60 }))
 }
 
