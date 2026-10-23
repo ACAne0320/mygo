@@ -3207,23 +3207,20 @@ func TestContentWindowTransparent(t *testing.T) {
 	if !onWindows {
 		t.Skip("reads the screen through a window of Windows")
 	}
+	if !canCompose() {
+		t.Skip("no DirectComposition: the window keeps its bitmap")
+	}
 	if !noRedirect {
 		t.Fatal("a transparent window of native UI has a redirection bitmap")
 	}
-	red := func() bool {
-		r, g, b, _ := screenColor(w, 300, 150)
-		return r > 200 && g < 60 && b < 60
+	if _, _, _, ok := screenColor(w, 300, 150); !ok {
+		t.Skip("the screen cannot be read")
 	}
-	readable := false
-	for deadline := time.Now().Add(3 * time.Second); !readable && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		readable = red()
+	color := func(x float64, want func(r, g, b uint8) bool) func() bool {
+		return func() bool { r, g, b, _ := screenColor(w, x, 150); return want(r, g, b) }
 	}
-	if !readable {
-		t.Skip("the screen does not show the window's pane: not reading what is behind it")
-	}
-	if r, g, b, _ := screenColor(w, 100, 150); b < 200 || r > 60 || g > 60 {
-		t.Errorf("the screen shows %d, %d, %d beside the pane, not the window behind", r, g, b)
-	}
+	eventually(t, "the window's pane on the screen", color(300, func(r, g, b uint8) bool { return r > 200 && g < 60 && b < 60 }))
+	eventually(t, "the window behind, beside the pane", color(100, func(r, g, b uint8) bool { return b > 200 && r < 60 && g < 60 }))
 }
 
 // TestContentWindowRepaintsWhatChanged moves the red row of a window of
