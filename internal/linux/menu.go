@@ -48,6 +48,7 @@ var (
 
 	cbMenuActivate   ptr
 	cbMenuDeactivate ptr
+	cbPopupRelease   ptr
 	cbMenuMap        ptr
 	cbTrayActivate   ptr
 
@@ -122,6 +123,12 @@ func initMenuCallbacks() {
 	})
 	cbMenuDeactivate = purego.NewCallback(func(menu, loop ptr) {
 		gMainLoopQuit(loop)
+	})
+	// A button released within GTK's MENU_SHELL_TIMEOUT (500 ms) of the
+	// press that opened a menu leaves the menu open (PopupMenu). The time
+	// is a GdkEventButton's, at 20.
+	cbPopupRelease = purego.NewCallback(func(menu, event, pressed ptr) bool {
+		return field[uint32](event, 20)-uint32(pressed) <= 500
 	})
 	cbMenuMap = purego.NewCallback(func(menu, data ptr) {
 		if w := theBackend.window(data); w != nil {
@@ -525,6 +532,14 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 		// GTK could not show it: there is no dismissal to wait for.
 		gtkWidgetDestroy(menu)
 		return
+	}
+	if b.onX11 && os.Getenv("WAYLAND_DISPLAY") != "" && event != 0 && field[int32](event, 0) == 4 { // GDK_BUTTON_PRESS
+		// GTK keeps a menu open on the release of the press that opened it,
+		// within MENU_SHELL_TIMEOUT, unless the pointer entered an item
+		// since. Under XWayland it enters one at the release, as the
+		// compositor gives the pointer to the menu's window, and the menu
+		// closed as soon as it opened.
+		connect(menu, "button-release-event", cbPopupRelease, ptr(field[uint32](event, 20)))
 	}
 	loop := gMainLoopNew(0, false)
 	connect(menu, "deactivate", cbMenuDeactivate, loop)
