@@ -124,11 +124,16 @@ func initMenuCallbacks() {
 	cbMenuDeactivate = purego.NewCallback(func(menu, loop ptr) {
 		gMainLoopQuit(loop)
 	})
-	// A button released within GTK's MENU_SHELL_TIMEOUT (500 ms) of the
-	// press that opened a menu leaves the menu open (PopupMenu). The time
-	// is a GdkEventButton's, at 20.
-	cbPopupRelease = purego.NewCallback(func(menu, event, pressed ptr) bool {
-		return field[uint32](event, 20)-uint32(pressed) <= 500
+	// The first release a menu hears, within GTK's MENU_SHELL_TIMEOUT
+	// (500 ms) of the press that opened it, leaves the menu open
+	// (PopupMenu); a later one, as a quick click on an item, goes to GTK.
+	// The time is a GdkEventButton's, at 20.
+	cbPopupRelease = purego.NewCallback(func(menu, event, _ ptr) bool {
+		if menu != opening.menu {
+			return false
+		}
+		opening.menu = 0
+		return field[uint32](event, 20)-opening.at <= 500
 	})
 	cbMenuMap = purego.NewCallback(func(menu, data ptr) {
 		if w := theBackend.window(data); w != nil {
@@ -483,6 +488,13 @@ func (w *window) enableEditItems() {
 	}
 }
 
+// opening is the menu shown last by a press, and when the press went
+// down, until the menu hears its first release (PopupMenu).
+var opening struct {
+	menu ptr
+	at   uint32
+}
+
 // PopupMenu shows a context menu and blocks until it is dismissed.
 func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.Point) {
 	// GTK positions menus relative to a window: the given one, else the
@@ -539,7 +551,10 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 		// since. Under XWayland it enters one at the release, as the
 		// compositor gives the pointer to the menu's window, and the menu
 		// closed as soon as it opened.
-		connect(menu, "button-release-event", cbPopupRelease, ptr(field[uint32](event, 20)))
+		outer := opening
+		opening.menu, opening.at = menu, field[uint32](event, 20)
+		defer func() { opening = outer }()
+		connect(menu, "button-release-event", cbPopupRelease, 0)
 	}
 	loop := gMainLoopNew(0, false)
 	connect(menu, "deactivate", cbMenuDeactivate, loop)
