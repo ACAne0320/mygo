@@ -483,8 +483,9 @@ by `mygo build` with `mygo_noinspector`) leave out its downloader and
   decorations, unlike a frameless one, so the compositor's lack of a title
   bar stands for the buttons, whatever the layout says. KWin's default
   mode is server too, but it draws title bars, and KDE keeps
-  `gtk-decoration-layout` in step with KWin's buttons: in a KDE session
-  (`XDG_CURRENT_DESKTOP`) the window decorates itself and has the bars, as
+  `gtk-decoration-layout` in step with KWin's buttons: on KWin, which alone
+  offers `org_kde_kwin_server_decoration_palette_manager`
+  (`gdk_wayland_display_query_registry`), the window decorates itself and has the bars, as
   on GNOME, instead of KWin's title bar over its page.
 - The app's GTK style sheet (`Theme.SetGTKCSS`, `style.go`) is a
   `GtkCssProvider` of its own for the default screen, at

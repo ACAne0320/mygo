@@ -153,12 +153,15 @@ func (b *Backend) Init(h platform.AppHandler, opts platform.AppOptions) error {
 	// open, and decides with it which windows it decorates.
 	var waylandType func() uintptr
 	var prefersSSD func(display ptr) bool
+	var offers func(display ptr, global *byte) bool
 	onWayland := bind(libGDK, &waylandType, "gdk_wayland_display_get_type") &&
 		gTypeCheckInstanceIsA(gdkDisplayGetDefault(), waylandType())
 	// KWin prefers them too, but it draws title bars, with buttons where
-	// KDE's layout puts GTK's.
-	b.compositorDecorates = onWayland && !onKDE(os.Getenv) &&
-		bind(libGDK, &prefersSSD, "gdk_wayland_display_prefers_ssd") && prefersSSD(gdkDisplayGetDefault())
+	// KDE's layout puts GTK's. It alone offers its title bars' palette.
+	b.compositorDecorates = onWayland &&
+		bind(libGDK, &prefersSSD, "gdk_wayland_display_prefers_ssd") && prefersSSD(gdkDisplayGetDefault()) &&
+		!(bind(libGDK, &offers, "gdk_wayland_display_query_registry") &&
+			offers(gdkDisplayGetDefault(), cs("org_kde_kwin_server_decoration_palette_manager")))
 	if onWayland {
 		bind(libGDK, &b.announceCSD, "gdk_wayland_window_announce_csd")
 		bind(libGDK, &b.waylandSurface, "gdk_wayland_window_get_wl_surface")

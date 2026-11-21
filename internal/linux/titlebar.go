@@ -26,8 +26,9 @@ import (
 // buttons, wants none, whatever the button layout says: GTK reads it from
 // GNOME's settings on Wayland, and their default shows close. KWin says so
 // too, but it draws title bars, and KDE keeps the layout in step with its
-// own: there the window decorates itself and has GTK's buttons, as on GNOME,
-// rather than KWin's title bar over its page.
+// own: there the window decorates itself and has GTK's buttons, as on
+// GNOME, rather than KWin's title bar over its page. KWin is told by
+// org_kde_kwin_server_decoration_palette_manager, which only it offers.
 
 // controlsCSS clears the bars around the buttons. With TitleBarHeight, the
 // bars take that height instead of the theme's.
@@ -183,17 +184,6 @@ func buttonLayout() (start, end string) {
 	gObjectGetPtr(gtkSettingsGetDefault(), cs("gtk-decoration-layout"), unsafe.Pointer(&p), 0)
 	before, after, _ := strings.Cut(takeStr(p), ":")
 	return windowButtons(before), windowButtons(after)
-}
-
-// onKDE reports a KDE Plasma session: XDG_CURRENT_DESKTOP, a list of
-// desktops, names KDE.
-func onKDE(getenv func(string) string) bool {
-	for _, d := range strings.Split(getenv("XDG_CURRENT_DESKTOP"), ":") {
-		if strings.EqualFold(d, "KDE") {
-			return true
-		}
-	}
-	return false
 }
 
 // WindowButtons returns the buttons of the desktop's layout, none where a
