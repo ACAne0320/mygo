@@ -228,6 +228,13 @@ export interface MacOSConfig {
   minimumSystemVersion?: string;
   /** The identity that signs the app and its disk image, e.g. `Developer ID Application: Jane Doe (TEAMID)` (default: `-`, ad hoc). */
   signingIdentity?: string;
+  /**
+   * Instead of codesign, a command that signs the app bundle, with `%1` for
+   * its path, on any system, e.g. `scripts/sign-macos.sh %1` running
+   * rcodesign on Linux. `mygo build` runs it before the disk image and the
+   * update files take the bundle; a failing command fails the build.
+   */
+  signCommand?: string;
   /** A property list of entitlements to sign the app with. */
   entitlements?: string;
   /**
@@ -249,6 +256,18 @@ export interface MacOSConfig {
   dmgTitle?: string;
   /** Notarizes the app and the disk image of production builds. */
   notarize?: NotarizeConfig;
+  /**
+   * App extensions built apart, as a share extension built with Xcode, which
+   * the app carries in `Contents/PlugIns`, each signed with the app's identity
+   * before the app, keeping its entitlements. `mygo dev` leaves them out.
+   */
+  extensions?: MacOSExtension[];
+}
+
+/** A prebuilt app extension of the macOS app. */
+export interface MacOSExtension {
+  /** The `.appex`, signed with its own entitlements, which hold the App Sandbox, and whose identifier starts with the app's and a dot, as `com.example.app.share`. */
+  path: string;
 }
 
 /** Credentials of `xcrun notarytool store-credentials <profile>`. */
@@ -285,7 +304,10 @@ export interface WindowsConfig {
    * An NSIS script that the installer includes, e.g. `build/installer.nsh`:
    * the macros it defines among `customInit`, `customInstall` and
    * `customUnInstall` run when the installer starts, at the end of the
-   * install, and in the uninstall before the app's folder is removed.
+   * install, and in the uninstall before the app's folder is removed;
+   * `customUnPage` (left with `customUnPageLeave`) adds an uninstaller
+   * page before the confirm page, and `customUnConfirmShow` and
+   * `customUnConfirmLeave` run as the confirm page shows and is left.
    */
   installerInclude?: string;
 }
@@ -373,6 +395,19 @@ export interface AndroidConfig {
    * they stay in the APK).
    */
   extractNativeLibs?: boolean;
+  /**
+   * The ABIs the app is built for, as `arm64`, `arm` or `amd64` (or
+   * `arm64-v8a`, `armeabi-v7a`, `x86_64`): for an app whose native modules
+   * ship prebuilt libraries for some only. The APK then carries no library of
+   * another ABI (default: all three).
+   */
+  abis?: string[];
+  /**
+   * Signs the APK with the JAR signature (v1) as well, which the build leaves
+   * out from `minSdk` 24 but some phones' installers still ask for
+   * (default: `false`).
+   */
+  v1Signing?: boolean;
 }
 
 /** An icon of two layers. */

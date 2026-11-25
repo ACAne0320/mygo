@@ -249,7 +249,7 @@ p.TextScale          // how many times larger text should be; 1 is the usual siz
 
 强调色是带非预乘 alpha 的 8 位 sRGB；`ui.RGB(p.Accent.R, p.Accent.G, p.Accent.B)` 把它变成 `ui.Color`，供你自己的绘制使用。
 
-`ReduceMotion` 对应 macOS 的“减弱动态效果”、Windows 关闭动画效果，以及 GNOME 关闭动画；`ReduceTransparency` 对应 macOS 的“降低透明度”和 Windows 关闭透明效果——Linux 桌面没有这些，因此在那里为 false；`HighContrast` 对应 macOS 的“增强对比度”、Windows 的对比度主题，以及 Linux 上设置门户提供的更高对比度（或 HighContrast GTK 主题）。macOS 没有文本缩放，因此那里的 `TextScale` 为 1。在设置门户不提供强调色的 Linux 桌面上，以及浏览器中，没有强调色。
+`ReduceMotion` 对应 macOS 的“减弱动态效果”、Windows 关闭动画效果、GNOME 关闭动画，以及 KDE 的动画速度设为“即时”（设置门户的减少动效）；`ReduceTransparency` 对应 macOS 的“降低透明度”和 Windows 关闭透明效果——Linux 桌面没有这些，因此在那里为 false；`HighContrast` 对应 macOS 的“增强对比度”、Windows 的对比度主题，以及 Linux 上设置门户提供的更高对比度（或 HighContrast GTK 主题）。macOS 没有文本缩放，因此那里的 `TextScale` 为 1。在设置门户不提供强调色的 Linux 桌面上，以及浏览器中，没有强调色。
 
 `Theme.OnUpdated` 在桌面改变其中任何一项时触发，调用 `SetSource` 时也是如此。读取这些设置可能需要请求桌面（Linux 上是设置门户），因此 MyGo 只读取一次，并一直保留到下次变化。包 `ui` 的默认主题已经会跟随强调色、对比度和文本缩放，`Animate` 则跟随减弱动态效果。与其他需要应用正在运行的调用一样，在 `App.Run` 之前的 `main` 中调用 `Preferences` 会 panic；从其他 goroutine 调用则会等待应用启动。
 
@@ -277,7 +277,7 @@ idle := mygo.Power.IdleTime() // since the last keyboard or mouse input
 
 传给 `KeepAwake` 的原因会显示在系统列出保持唤醒项的地方。
 
-macOS 会在一分钟内把没有任何窗口显示的应用——窗口被隐藏、最小化、被遮挡，或位于锁屏之后——置于 App Nap：它降低应用的优先级，合并计时器并限制 I/O，这会拖慢在后台提供网络服务、串流或同步的应用。托盘图标只要还显示在菜单栏上，就算作一个正在显示的窗口。`KeepRunning` 会在释放之前一直阻止 App Nap，并让计算机在空闲时仍能休眠，正如整天待在菜单栏里的应用所希望的那样；`KeepAwake` 也会阻止 App Nap，但同时让计算机保持唤醒。其他系统上 `KeepRunning` 不做任何事。
+macOS 会在一分钟内把没有任何窗口显示的应用——窗口被隐藏、最小化、被遮挡，或位于锁屏之后——置于 App Nap：它降低应用的优先级，合并计时器并限制 I/O，这会拖慢在后台提供网络服务、串流或同步的应用。托盘图标只要还显示在菜单栏上，就算作一个正在显示的窗口。`KeepRunning` 会在释放之前一直阻止 App Nap，并让计算机在空闲时仍能休眠，正如整天待在菜单栏里的应用所希望的那样；`KeepAwake` 也会阻止 App Nap，但同时让计算机保持唤醒。Windows 对看不见的进程也做类似的节流：EcoQoS 会放慢它的线程，在混合架构处理器上还会把它们移到能效核心上。`KeepRunning` 会在释放之前关掉这种节流，释放后再把节流交还给 Windows，于是重新显示窗口的应用会和其他应用一样由 Windows 决定。Linux 桌面不会放慢看不见的应用，对 `KeepRunning` 不做任何事。
 
 在 Linux 上，`OnLockScreen` 会在屏幕保护程序启动时被调用（它通常会锁定屏幕）；在不上报空闲时间的桌面上，`IdleTime` 为 0。
 

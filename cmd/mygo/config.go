@@ -213,6 +213,17 @@ type MacOS struct {
 	// ad hoc: the app runs on the Mac that built it, but Gatekeeper blocks
 	// it on others.
 	SigningIdentity string `json:"signingIdentity"`
+	// SignCommand signs the app bundle instead of codesign, with %1
+	// standing for its path, on any system, e.g. with rcodesign on Linux:
+	//   "scripts/sign-macos.sh %1"
+	// `mygo build` runs it where it would run codesign, once the bundle
+	// holds everything, provisioning profile included, and before the disk
+	// image and the update files take it; a failing command fails the
+	// build. It signs the whole bundle, the code among its resources
+	// included, with the entitlements it chooses, and may notarize and
+	// staple it. SigningIdentity still signs the disk image, which only
+	// macOS makes, and `mygo dev` still signs with codesign.
+	SignCommand string `json:"signCommand"`
 	// Entitlements is a plist of entitlements to sign the app with.
 	Entitlements string `json:"entitlements"`
 	// ProvisioningProfile is embedded as Contents/embedded.provisionprofile
@@ -236,6 +247,19 @@ type MacOS struct {
 	// notary service and staples the tickets to both. It needs a Developer
 	// ID signing identity.
 	Notarize *Notarize `json:"notarize"`
+	// Extensions are app extensions built apart, as a share extension built
+	// with Xcode, which the app carries in Contents/PlugIns, each signed
+	// with the app's identity before the app, keeping its entitlements.
+	// mygo dev leaves them out.
+	Extensions []MacOSExtension `json:"extensions"`
+}
+
+// MacOSExtension is a prebuilt app extension of the macOS app.
+type MacOSExtension struct {
+	// Path is the .appex, signed with its own entitlements, which hold the
+	// App Sandbox: macOS loads an app extension only in it. Its identifier
+	// starts with the app's and a dot, as com.example.app.share.
+	Path string `json:"path"`
 }
 
 // IOS configures the iOS app (mygo build -platform ios, ios/simulator).
@@ -343,6 +367,17 @@ type Android struct {
 	// module's jniLibs. By default they stay in the APK, uncompressed, and
 	// are loaded from it.
 	ExtractNativeLibs bool `json:"extractNativeLibs"`
+	// ABIs are those the app is built for, as "arm64", "arm" or "amd64"
+	// (or "arm64-v8a", "armeabi-v7a", "x86_64"): for an app whose native
+	// modules ship prebuilt libraries for some only, such as an executable
+	// it runs. The APK then carries no library of another ABI. Default:
+	// all three.
+	ABIs []string `json:"abis"`
+	// V1Signing signs the APK with the JAR signature (v1) as well as the
+	// newer schemes. Android does not need it from 7.0, so the build leaves
+	// it out from minSdk 24, but some phones' installers still refuse an
+	// APK without it.
+	V1Signing bool `json:"v1Signing"`
 }
 
 // AndroidAdaptiveIcon is an icon of two layers.
@@ -407,6 +442,23 @@ func readConfig(root string) (data []byte, file string, err error) {
 	return nil, "", nil
 }
 
+// setVersion makes v the app's version, in place of mygo.json's (mygo build
+// -version): a release's tag, whose prefix is dropped, updates.tagPrefix or
+// else a leading v.
+func (c *Config) setVersion(v string) error {
+	v = strings.TrimSpace(v)
+	prefix := "v"
+	if c.Updates != nil && c.Updates.TagPrefix != "" {
+		prefix = c.Updates.TagPrefix
+	}
+	v = strings.TrimPrefix(v, prefix)
+	if v == "" || strings.ContainsFunc(v, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' || r == '\\' }) {
+		return fmt.Errorf("-version %q is not a version", v)
+	}
+	c.Version = v
+	return c.validate()
+}
+
 func (c *Config) validate() error {
 	if n := c.MacOS.Notarize; n != nil && n.KeychainProfile == "" {
 		return errors.New("macos.notarize needs a keychainProfile (see xcrun notarytool store-credentials)")
@@ -438,6 +490,17 @@ func (c *Config) validate() error {
 		if name == "" || file == "" {
 			return fmt.Errorf("macos.helperEntitlements maps the path of code among the resources to a property list of entitlements, not %q to %q", name, file)
 		}
+	}
+	extensions := map[string]bool{}
+	for i, e := range c.MacOS.Extensions {
+		if !strings.HasSuffix(strings.TrimRight(e.Path, `/\`), ".appex") {
+			return fmt.Errorf("macos.extensions[%d].path: %q is not an app extension, as build/ShareExtension.appex", i, e.Path)
+		}
+		name := filepath.Base(e.Path)
+		if extensions[name] {
+			return fmt.Errorf("macos.extensions[%d].path: another extension is %s, which Contents/PlugIns holds one of", i, name)
+		}
+		extensions[name] = true
 	}
 	if c.Windows.Certificate != "" && c.Windows.SignCommand != "" {
 		return errors.New("windows.certificate and windows.signCommand exclude each other")
@@ -561,6 +624,11 @@ func (c *Config) validateMobile() error {
 	if c.Android.Splash != "" {
 		if _, err := parseHexColor(c.Android.Splash); err != nil {
 			return fmt.Errorf("android.splash: %w", err)
+		}
+	}
+	for _, a := range c.Android.ABIs {
+		if androidABI(a) == "" {
+			return fmt.Errorf("android.abis: %q is not an ABI, as arm64, arm or amd64", a)
 		}
 	}
 	return nil

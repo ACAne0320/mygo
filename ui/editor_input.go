@@ -274,7 +274,10 @@ func (w *widgetTextInput) SetTextSelection(r TextInputRange) {
 	}
 	ed.commitCompose()
 	a, z := ed.buf.runeAtUTF16(r.Start), ed.buf.runeAtUTF16(r.End)
-	ed.anchor, ed.caret = a, z
+	// A whole new selection, as the app's SetTextSelection makes: one that
+	// Shift and the arrows or a drag made is kept as visual ranges, which
+	// would otherwise stay selected.
+	ed.editorSelection = editorSelection{anchor: a, caret: z}
 	ed.hasDesired = false
 	if ed.area != nil {
 		ed.area.reveal = true
@@ -362,7 +365,7 @@ func (w *widgetTextInput) IndexForPoint(p Point) (int, bool) {
 	}
 	var position text.CaretPosition
 	if a := w.ed.area; a != nil {
-		position = a.documentPositionAt(w.ed, p.X-w.ed.originX, float64(p.Y-w.ed.originY)+a.scroll)
+		position = a.documentPositionAt(w.ed, p.X-w.ed.originX+w.ed.scrollX, float64(p.Y-w.ed.originY)+a.scroll)
 	} else {
 		l := w.layout()
 		position = l.PositionAt(p.X-w.ed.originX+w.ed.scrollX, p.Y-w.ed.originY)

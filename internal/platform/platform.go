@@ -20,10 +20,20 @@ import (
 // It is errors.ErrUnsupported too (errors.Is), which apps check.
 var ErrUnsupported error = unsupportedError{}
 
+// Unsupported returns ErrUnsupported in a backend's own words, a browser's
+// or a phone's: Error reports message, and errors.Is matches it as
+// ErrUnsupported and errors.ErrUnsupported.
+func Unsupported(message string) error { return unsupportedMessage(message) }
+
 type unsupportedError struct{}
 
 func (unsupportedError) Error() string        { return "not supported on this platform" }
 func (unsupportedError) Is(target error) bool { return target == errors.ErrUnsupported }
+
+type unsupportedMessage string
+
+func (e unsupportedMessage) Error() string { return string(e) }
+func (unsupportedMessage) Unwrap() error   { return ErrUnsupported }
 
 // ErrNavigated is what CallAsyncFunction fails with when the document the
 // body ran in went away before it answered, and what Page.Eval returns
@@ -476,7 +486,8 @@ type WindowOptions struct {
 	VibrancyTint *Color
 	// CornerRadius rounds a frameless window's corners, in DIPs: its
 	// content and material are cut to them (macOS), or the system rounds
-	// it with its own corners (Windows 11).
+	// it with its own corners (Windows 11). On macOS a titled window's
+	// corners are drawn by the system at it.
 	CornerRadius int
 	Opacity      float64
 	Parent       Window
@@ -1047,7 +1058,9 @@ type WindowHandler interface {
 	// the key itself, which the system then leaves alone (Windows opens no
 	// menu for Alt and the key), for TextComposition whether it took the
 	// composition, which the input method gives up otherwise (macOS), for
-	// PointerScroll whether the content scrolled or a handler took it, and
+	// PointerScroll whether the content scrolled or a handler took it
+	// (with Swipe, whether a handler took it or the content scrolled
+	// sideways), and
 	// for SurfaceCommandEnabled whether the command would act; it returns
 	// false for other events.
 	SurfaceEvent(ev SurfaceEvent) bool
@@ -1403,7 +1416,8 @@ type Preferences struct {
 	// has none.
 	Accent Color
 	// ReduceMotion asks for less motion: macOS's Reduce Motion, Windows's
-	// animation effects and GNOME's animations turned off.
+	// animation effects, GNOME's animations turned off and KDE's Instant
+	// animation speed.
 	ReduceMotion bool
 	// ReduceTransparency asks for opaque surfaces in place of translucent
 	// ones: macOS's Reduce Transparency, Windows's transparency effects
@@ -1466,8 +1480,9 @@ type Power interface {
 	// sleeping while idle until release is called.
 	KeepAwake(display bool, reason string) (release func())
 	// KeepRunning keeps the system from slowing the app down while none
-	// of its windows shows, as macOS's App Nap does, until release is
-	// called; it leaves the system free to sleep when idle.
+	// of its windows shows, as macOS's App Nap and Windows' power
+	// throttling do, until release is called; it leaves the system free
+	// to sleep when idle.
 	KeepRunning(reason string) (release func())
 	OnBattery() bool
 	IdleTime() time.Duration
@@ -1711,6 +1726,7 @@ type Tab struct {
 type TabBar interface {
 	Select(i int)
 	SetBadge(i int, badge string)
+	SetTitle(i int, title string)
 	Close()
 }
 

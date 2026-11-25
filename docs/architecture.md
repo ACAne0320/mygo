@@ -1024,7 +1024,9 @@ what only it does well: the views, the web view and its delegates, the
 keyboard, accessibility, the system's dialogs and Swift-only or Java-only
 APIs. Phones' build modes need cgo to link (`c-archive` linked into the
 Swift host by swiftc, `c-shared` loaded by the Kotlin one), the only cgo of
-MyGo, in `glue_ios.go` and `glue_android.go` (with `jni_android.c`); the
+MyGo, in `glue_ios.go` and `glue_android.go` (with `jni_android.c`, which
+keeps the `JavaVM*` and a global reference to the application's `Context`
+that `mygo.JavaVM` and `mygo.AndroidContext` hand to apps' C); the
 rest of the backend builds anywhere, and its tests run on desktops with a
 fake host. Desktop files of `darwin` and `linux` exclude `ios` and
 `android`, which their constraints otherwise include.
@@ -1542,8 +1544,8 @@ permissions (through `isTrusted`), new windows and the browser, downloads,
 and main-frame navigations the page starts to another origin than its
 committed page's (`Window.origin`). `serveScheme` puts the asking page in
 the request's context, under the keys of `CallerWindow` and `CallerPage`,
-so a scheme's handler knows which page sent a request: that's the channel
-of untrusted pages to the app.
+so a scheme's handler knows which page sent a request (`downloadScheme`
+does for a download): that's the channel of untrusted pages to the app.
 
 The message handler is reachable from every frame, while trust is decided
 by the main frame's URL, so an iframe of another origin must not be able to
@@ -1943,7 +1945,8 @@ Package `i18n` is a leaf (it imports golang.org/x/text/language only):
   "modern", 430 locales) comes from cldr-dates-full, cldr-numbers-full and
   cldr-localenames-full, pinned like cldr-core (`format.go` of the
   generator writes `format_tables.go`). A locale's data is a record of
-  slots (month and weekday names by context and width, day periods, eras,
+  slots (month, quarter and weekday names by context and width, day
+  periods, eras,
   date, time and date-time patterns, the availableFormats of the
   skeletons MyGo formats, time zones' GMT formats, number symbols,
   patterns and digits of the default numbering system and of latn); each
@@ -1954,7 +1957,7 @@ Package `i18n` is a leaf (it imports golang.org/x/text/language only):
   a constant of its own: the numbers with the locales and their parents
   (`fmtPackedNumbers`, 3 KB), which every app links, as MyGo's own strings
   format numbers, and the dates with the names of languages
-  (`fmtPackedDates`, 77 KB), which only apps that format dates or name
+  (`fmtPackedDates`, 84 KB), which only apps that format dates or name
   languages link. At run time `cldr.go` inflates each once and puts a
   locale's record together on its first use (an atomic pointer per
   locale), its dates on the first date it formats (`withDates`); `keyOf` caches what a tag formats with (its data locale, by
@@ -2818,6 +2821,12 @@ type, before an entry is enrolled, so an ignored directory is never opened;
 the directories it ignored are kept per listed directory, so that the
 notices of a `Subtree` target about what is in them are dropped.
 
+A watch that polls (`Poll`, or `PollInterval` where `NewFileWatch`
+returns `ErrUnsupported`) is given `pollFileWatch`, which takes every target
+and says nothing, and its goroutine calls `lookAll` every `PollInterval`,
+as after an overflow: the scan finds what changed against its snapshot.
+`HintsOnly` has no snapshot, so it never polls.
+
 `HintsOnly` swaps the scan for `fileWatchHints` (`watch_hints.go`), behind
 the same `fileWatchLooker` the watch's goroutine drives: no snapshot, only
 the directories it enrolls. A notice naming an entry hints at the
@@ -3292,6 +3301,9 @@ either.
   map as WAI-ARIA's Core Accessibility API Mappings do: `RoleRegion` is
   one only with a name (a group without), `AXLandmarkRegion`, ATK's
   landmark with `xml-roles:region`, and UIA's custom LandmarkType;
+  `RoleForm` is one only with a name likewise (a group without),
+  `AXGroup` with `AXLandmarkForm`, ATK's landmark with
+  `xml-roles:form`, and UIA's Group with the form LandmarkType;
   `RoleSearch` is `AXGroup` with `AXLandmarkSearch`, ATK's landmark
   with `xml-roles:search`, and UIA's Group with the search LandmarkType;
   `RoleMain`, `RoleBanner`, `RoleContentInfo` and `RoleComplementary`
@@ -3446,7 +3458,9 @@ either.
   fractional and content-sized tracks, with the items' percentages of
   their grid areas, as auto while the tracks are sized), laying out again
   only what changed since the last frame (see below); commits the boxes to the elements'
-  states with the hit list in paint order, the focus order and the labels;
+  states with the hit list in paint order, the focus order and the labels,
+  and whether their text was cut, or text inside them (`state.truncated`,
+  which `Truncated` reads as `Bounds` reads the box);
   paints a `scene.Scene`; and presents it. The pointer finds what it is
   over in the hit list, last first (`appendHitChain`, `contains`): an
   element whose visible part, clipped as commit found it (`state.vx`..),
@@ -4269,8 +4283,10 @@ either.
   on Windows, DWM's `AccentColor`, `SPI_GETCLIENTAREAANIMATION`,
   `SPI_GETHIGHCONTRAST` and Accessibility's `TextScaleFactor`, with
   `WM_SETTINGCHANGE`; on Linux, GTK's `gtk-enable-animations` and the
-  settings portal's accent, contrast and GNOME's text scaling factor
-  (`ReadAll`, `SettingChanged`). What the pointing devices can do
+  settings portal's reduced motion (or GNOME's `enable-animations`, for
+  KDE's Instant animation speed, which GTK's setting does not follow),
+  accent, contrast and GNOME's text scaling factor (`ReadAll`,
+  `SettingChanged`). What the pointing devices can do
   (`Pointer`, `AnyPointer`, `NoHover`, `NoAnyHover`, Media Queries 4's
   interaction features), whose zero is a mouse's, as macOS's always is,
   comes from the media queries in browsers; on Linux from the sources of
@@ -4455,7 +4471,18 @@ either.
   O(log n) whatever the estimate. The area scrolls as a scroll container,
   its offset the state's (`flagScrollY`, the content as high as its
   paragraphs), kept by the anchor as heights above the view are measured;
-  an edit, a move of the caret or a press reveals the caret once.
+  an edit, a move of the caret or a press reveals the caret once. With
+  `NoWrap`, which sets `flagScrollX` on an area, its paragraphs break only
+  at newlines and it scrolls sideways too, by the editor's `scrollX`, as a
+  single-line input does: the x in the layouts at the view's left, which a
+  line aligned to the right and longer than the view goes left of. Each
+  paragraph laid out keeps how far its lines reach left and right (`ext`),
+  the content as wide as the farthest, found again only when the farthest
+  shrinks (`extents`); the state's offset counts from the content's left,
+  or its right right to left, as a scroll container's, so that the wheel,
+  Shift and the wheel, the scroll bar and `ScrollState` move it. Hits,
+  painting, the input method's caret and `IndexForPoint` take `scrollX`
+  off, and a drag held past a side asks for frames, selecting on.
 - **Editing layers.** `ui/editor.go` holds the widget's editing state;
   `editor_history.go` owns delta undo, `editor_selection.go` the visual
   range set and caret affinity, `editor_navigation.go` keys and pointer
@@ -4696,7 +4723,10 @@ either.
   source offsets, to copy text with block separators, Markdown, and the
   HTML of that Markdown parsed again, which `ui/richtext` pastes with its
   formatting, as it reads Markdown with the same parser
-  (`ParseMarkdown`). Links open in the system only when `ui.SafeToOpen`
+  (`ParseMarkdown`). `HTML` escapes the raw tags a browser reads to their
+  end, which is cmark-gfm's tagfilter (`ExtTagFilter`, in `GFM` and so in
+  `Default`), so that what an app copies as HTML carries no `<script>`
+  into what pastes it. Links open in the system only when `ui.SafeToOpen`
   allows them, in both. Tasks' check boxes are boxes of `RoleCheckBox`,
   read-only, or, with `Options.OnTask`, focusable and named by the plain
   text of their item's first paragraph, kept by block while its start,
@@ -5699,7 +5729,9 @@ either.
   the other params, so a build lays it out once.
   Text elements built inside a text (`ui/inline.go`) are inline: the
   paragraph takes their text when its `Children` returns, and their
-  styles as spans over its own when it lays out. At commit, each gets the
+  styles as spans over its own when it lays out (a background, with its
+  corners and padding, as a span's `Radius`, `PaddingX`, `PaddingY` and
+  `PaddingStart`). At commit, each gets the
   boxes of its runes in the paragraph's layout (`Selection`), one hit
   each, so the pointer, the focus order, tooltips and menus work as for
   any element; they paint only their focus ring (their `Opacity`,
@@ -6293,6 +6325,11 @@ either.
   (`runtime.AddCleanup`). `System.Reuse` keeps its engine, fonts and
   layouts, and starts its language and atlases anew. At most GOMAXPROCS
   wait idle; `BenchmarkTesterFirstFrame` measures a Tester's first frame.
+  A system `New` made that is no longer idle nor any Tester's becomes
+  unreachable, and its engine closes (`engineCloser`, run by a cleanup),
+  releasing what it holds of the system's text stack: on Linux a Pango
+  font map and the thread fontconfig starts for it, which a test binary
+  of hundreds of Testers otherwise kept (#1902).
   `BenchmarkFrame` in `ui` measures a frame of a large window on the CPU,
   and `BenchmarkListScroll` the frames scrolling a list of a million rows;
   `BenchmarkDiff*` the frames of a window as godiff's, two lists of texts
@@ -6479,7 +6516,8 @@ make it work, and phones a fourth:
   `swift build` (debug for the host, or release for the target's
   architectures, both at once for universal), copies the dylib and the
   frameworks its package brings into `Contents/Frameworks`, which
-  `codesign --deep` signs, and merges the modules' `Info.plist` and
+  `codesign --deep` signs with the app, or `appCodesigning` one by one
+  in an app with extensions, and merges the modules' `Info.plist` and
   `Entitlements.plist` (`mergePlist`) under the app's own keys, which
   settle the modules' conflicts. A module's language for a platform is
   `moduleLang` (`native_module.go`): Swift on macOS when it has `swift/`,
@@ -6726,7 +6764,15 @@ make it work, and phones a fourth:
   an `Assets.car`, as it is or compiled from an Icon Composer `.icon` by
   `xcrun actool`), signed with
   `macos.signingIdentity` (hardened runtime and timestamp for real
-  identities, ad hoc by default); `darwin/universal` combines both
+  identities, ad hoc by default). The prebuilt app extensions of
+  `macos.extensions` go in `Contents/PlugIns` (`macos_extensions.go`)
+  once their identifiers start with the app's, and keep the entitlements
+  they were signed with, as macOS loads them only in the App Sandbox: in
+  an app with extensions, `appCodesigning` signs each item of
+  `Contents/Frameworks` and `Contents/PlugIns` with `--deep` and
+  `--preserve-metadata=entitlements`, then the app without `--deep`,
+  which would give them the app's entitlements. `mygo dev` leaves them
+  out (`devConfig`). `darwin/universal` combines both
   architectures with a pure-Go fat-binary writer. Linux gets a `.desktop`
   entry and icon. The production flag makes `IsDev` false, which disables
   the web inspector by default.
@@ -6833,7 +6879,9 @@ make it work, and phones a fourth:
   `%LOCALAPPDATA%\Programs\<name>` (`windows.installDirName` names the
   folder otherwise), where the updater can write and where the installers
   of later versions install too (`InstallDirRegKey` reads the uninstall
-  entry's `InstallLocation`), a Start menu shortcut, a desktop shortcut
+  entry's `InstallLocation`), in a folder of the app's own where the
+  folder chosen holds other files (`nsisOwnFolder`), as the uninstaller
+  removes the whole folder, a Start menu shortcut, a desktop shortcut
   that the finish page's second check box (MUI's "show readme" one)
   creates, and an uninstaller registered
   under `HKCU\…\Uninstall\<identifier>`; `/S /D=<dir>` installs
@@ -6847,8 +6895,19 @@ make it work, and phones a fourth:
   languages (`nsisHooks`); its `customInit`, `customInstall` and
   `customUnInstall` macros, each inserted only under `!ifmacrodef`, run
   in `.onInit`, at the end of the install section and in the uninstall
-  section before `RMDir /r "$INSTDIR"`, as electron-builder's do; without
-  it the script is unchanged.
+  section before `RMDir /r "$INSTDIR"`, as electron-builder's do. The
+  uninstaller's pages must be declared before the include, which follows
+  the languages, so the script declares `UninstPage custom un.mygoPage
+  un.mygoPageLeave` and the confirm page's `MUI_PAGE_CUSTOMFUNCTION_SHOW`
+  and `_LEAVE` (`un.mygoConfirmShow`, `un.mygoConfirmLeave`) there, and
+  defines those functions after the include: they insert
+  `customUnPage`, `customUnPageLeave`, `customUnConfirmShow` and
+  `customUnConfirmLeave` under `!ifmacrodef`, and `un.mygoPage` aborts,
+  skipping its page, without `customUnPage`. Without
+  `windows.installerInclude` the script is unchanged. The uninstaller
+  also deletes the user's `App.SetOpenAtLogin` value, named by the
+  identifier, from `HKCU\…\CurrentVersion\Run` and
+  `…\Explorer\StartupApproved\Run` (`nsisLoginEntry`).
   `makensis` comes from an installation of NSIS or, on Windows, where NSIS
   is rarely installed, from the official zip of the release that
   `Release` in `internal/nsis` pins, which the CLI downloads once, checks
@@ -7324,8 +7383,9 @@ which npm allows only for packages that exist: the first release uses an
    need: main-thread only, synchronous, or with a callback that runs on the
    main thread exactly once.
 3. **Implement it in every backend**: `darwin`, `linux`, `windows`, `web`,
-   `fake` and `unsupported` (return `platform.ErrUnsupported` or a zero
-   value).
+   `fake` and `unsupported` (return `platform.ErrUnsupported`, or
+   `platform.Unsupported(message)` to say it in the backend's own words, or
+   a zero value).
    Create callbacks once, never per call.
 4. **Wire the core**: hop with `onMain`/`onMainValue`, or `postMain` + `await`
    + `deliver` for asynchronous native results. Start with `needsApp` when
@@ -7363,7 +7423,7 @@ which npm allows only for packages that exist: the first release uses an
 | secrets | Security.framework generic passwords in the login keychain (`SecItem*`), service and account as keytar | libsecret's `org.freedesktop.Secret.Generic` schema (attributes `service`, `account`), loaded on first use, libsecret 0.19 or later; no libsecret, no session bus (`g_bus_get_sync`) or no Secret Service on it (`G_DBUS_ERROR_SERVICE_UNKNOWN`, `NAME_HAS_NO_OWNER`, `NO_SERVER`) is `ErrUnsupported` | Credential Manager generic credentials (`CredWriteW`), target `service/account` |
 | vibrancy | all materials, behind pages and native UI; Liquid Glass (`NSGlassEffectView`) from macOS 26, the popover and HUD materials before, with a `tintColor` and the native UI's `Glass{Native}` placed over web views; frameless windows cut to `CornerRadius`; `SetActiveAppearance` through AppKit's private `_setForceMainAppearance:` | ignored | Windows 11 22H2 Mica, Acrylic, Tabbed, behind pages and native UI, in windows created with a material, which have no menu bar; Liquid Glass as Acrylic; frameless windows given a `CornerRadius` rounded by DWM |
 | active windows | the core's state, from key windows; materials follow AppKit's (`NSVisualEffectStateFollowsWindowActiveState`), but panels', flyouts' and kept ones' (`NSVisualEffectStateActive`) | the core's state, from GDK's focus; GTK's own title bar goes `:backdrop` as a focusable flyout takes the keyboard | the core's state, from `WM_ACTIVATE`; DWM's Mica and Acrylic follow the frame, kept active while the window's focusable flyout is (`WM_NCACTIVATE`) |
-| accent color and accessibility preferences | `NSColor.controlAccentColor` (10.14+), `accessibilityDisplayShouldReduceMotion` (10.12+), `accessibilityDisplayShouldReduceTransparency` and `accessibilityDisplayShouldIncreaseContrast` (10.10+), with `NSSystemColorsDidChangeNotification` and `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`; no text scale | GTK's `gtk-enable-animations` and theme name, and the settings portal's accent, contrast and GNOME's `text-scaling-factor` (`ReadAll`, `SettingChanged`); no reduced transparency; the pointing devices from the default seat's, as they come and go | DWM's `AccentColor`, `SPI_GETCLIENTAREAANIMATION`, Personalize's `EnableTransparency`, `SPI_GETHIGHCONTRAST` and Accessibility's `TextScaleFactor`, with `WM_SETTINGCHANGE`; the pointing devices from `SM_MOUSEPRESENT`, `SM_DIGITIZER` and tablet mode, not followed as they are plugged in |
+| accent color and accessibility preferences | `NSColor.controlAccentColor` (10.14+), `accessibilityDisplayShouldReduceMotion` (10.12+), `accessibilityDisplayShouldReduceTransparency` and `accessibilityDisplayShouldIncreaseContrast` (10.10+), with `NSSystemColorsDidChangeNotification` and `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`; no text scale | GTK's `gtk-enable-animations` and theme name, and the settings portal's `reduced-motion`, accent, contrast and GNOME's `enable-animations` and `text-scaling-factor` (`ReadAll`, `SettingChanged`); no reduced transparency; the pointing devices from the default seat's, as they come and go | DWM's `AccentColor`, `SPI_GETCLIENTAREAANIMATION`, Personalize's `EnableTransparency`, `SPI_GETHIGHCONTRAST` and Accessibility's `TextScaleFactor`, with `WM_SETTINGCHANGE`; the pointing devices from `SM_MOUSEPRESENT`, `SM_DIGITIZER` and tablet mode, not followed as they are plugged in |
 | preferred languages | the global `AppleLanguages` (`CFPreferencesCopyValue`), not the app's | `LANGUAGE`, then `LC_ALL`, `LC_MESSAGES`, `LANG`; read when asked, no changes reported | `GetUserPreferredUILanguages`, `WM_SETTINGCHANGE` "intl" |
 | regional formats | `autoupdatingCurrentLocale`, its calendar's first weekday, the hour of the skeleton "j"; `NSCurrentLocaleDidChangeNotification` and System Settings' distributed notifications | glibc's `nl_langinfo_l` of `LC_TIME` (`_NL_TIME_FIRST_WEEKDAY`, `T_FMT`), else by region | `GetLocaleInfoEx` of the user's default: `LOCALE_IFIRSTDAYOFWEEK`, `LOCALE_STIMEFORMAT` |
 | the app's language kept | `AppleLanguages` of the app's defaults | the file `locale` in PathUserData | the file `locale` in PathUserData, and the process's preferred UI languages |
@@ -7419,7 +7479,7 @@ which npm allows only for packages that exist: the first release uses an
 | power events | NSWorkspace sleep/wake, `com.apple.screenIsLocked` distributed notifications | logind `PrepareForSleep` (system bus), screen saver `ActiveChanged` (GNOME, freedesktop) | `WM_POWERBROADCAST`, `WM_WTSSESSION_CHANGE` |
 | Now Playing and media keys | `MPNowPlayingInfoCenter` (its `nowPlayingInfo` and `playbackState`; artwork as an `MPMediaItemArtwork` decoding the bytes it holds when asked) and the targets of `MPRemoteCommandCenter`'s commands, enabled as the info offers them; MediaPlayer.framework loads with the first `Set` | an MPRIS player (`org.mpris.MediaPlayer2` and `.Player` at `/org/mpris/MediaPlayer2`, exported with `g_dbus_connection_register_object`), whose bus name `org.mpris.MediaPlayer2.<app>.instance<pid>` is owned only while it shows something; `PropertiesChanged` on each change, `Seeked` when the position jumps; `xesam:artist` lists `Artists`; the artwork goes to a file in `$XDG_RUNTIME_DIR` for `mpris:artUrl`; `Raise` reaches the core as `platform.MediaRaise`, which shows and focuses the window that had the keyboard last | the `SystemMediaTransportControls` of the application window (`ISystemMediaTransportControlsInterop::GetForWindow`), with agile event handlers, a `RandomAccessStreamReference` over a memory stream for the thumbnail, and the timeline properties for position and seeking |
 | KeepAwake | `NSProcessInfo` activity (shows in `pmset -g assertions`) | XDG portal `Inhibit`, else `org.freedesktop.ScreenSaver.Inhibit` | `PowerCreateRequest` |
-| KeepRunning | `NSProcessInfo` activity `NSActivityUserInitiatedAllowingIdleSystemSleep`: no App Nap, idle sleep allowed (not in `pmset -g assertions`) | nothing: desktops don't slow apps out of sight | nothing yet (power throttling, EcoQoS, would be `SetProcessInformation`'s `ProcessPowerThrottling`) |
+| KeepRunning | `NSProcessInfo` activity `NSActivityUserInitiatedAllowingIdleSystemSleep`: no App Nap, idle sleep allowed (not in `pmset -g assertions`) | nothing: desktops don't slow apps out of sight | `SetProcessInformation`'s `ProcessPowerThrottling`: execution speed opted out until the last release, which puts back the policy read before (usually the system's to decide) |
 | IsOnBattery, IdleTime | IOKit power sources, `CGEventSourceSecondsSinceLastEventType` | `/sys/class/power_supply`; Mutter idle monitor or `GetSessionIdleTime` | `GetSystemPowerStatus`, `GetLastInputInfo` |
 | network status | `nw_path_monitor` on a queue of its own, the first `Status` waiting (up to a second) for its first path; online when the path is satisfied, metered when it is expensive or constrained | `GNetworkMonitor`, `network-available` (a default route) and `network-metered` | `GetNetworkConnectivityHint`, `NotifyNetworkConnectivityHintChange`; online from local access up (not none or hidden), metered for a fixed or variable cost, roaming, over or near the data limit |
 | window position | honored | ignored by Wayland compositors | honored |
